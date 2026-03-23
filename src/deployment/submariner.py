@@ -212,13 +212,17 @@ class Submariner(object):
         config.switch_ctx(self.designated_broker_cluster_index)
         logger.info(f"Switched context: {config.cluster_ctx.ENV_DATA['cluster_name']}")
         delete_file_with_prefix("broker-info.subm")
-        deploy_broker_cmd = "deploy-broker"
+        # FIX: Add explicit --kubeconfig parameter (follows official Submariner docs)
+        kubeconfig_path = get_kube_config_path(config.cluster_ctx.ENV_DATA['cluster_path'])
+        deploy_broker_cmd = f"deploy-broker --kubeconfig {kubeconfig_path}"
         run_subctl_cmd(deploy_broker_cmd)
 
     @retry(CommandFailed, tries=5, delay=30, backoff=1)
     def prepare_aws_cloud(self, cluster):
         infra_id = get_infra_id(cluster.ENV_DATA["cluster_path"])
-        prepare_cmd = f'cloud prepare aws --ocp-metadata {cluster.ENV_DATA["cluster_path"]}/metadata.json  --region {cluster.ENV_DATA["region"]}'
+        # FIX: Add explicit --kubeconfig parameter (follows official Submariner docs)
+        kubeconfig_path = get_kube_config_path(cluster.ENV_DATA['cluster_path'])
+        prepare_cmd = f'cloud prepare aws --kubeconfig {kubeconfig_path} --ocp-metadata {cluster.ENV_DATA["cluster_path"]}/metadata.json --region {cluster.ENV_DATA["region"]}'
         run_subctl_cmd(prepare_cmd)
 
     @retry(CommandFailed, tries=5, delay=60, backoff=1)

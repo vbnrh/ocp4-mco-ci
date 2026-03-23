@@ -1,11 +1,10 @@
 RUN:
-  bin_dir: './bin'
-  client_version: '4.16.0-rc.9'
+  client_version: 'candidate-4.14'
 DEPLOYMENT:
   force_download_installer: false
-  installer_version : "4.16.0-rc.9"
+  installer_version : "candidate-4.14"
   ssh_key: "~/.ssh/id_rsa.pub"
-  ocp_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp"
+  ocp_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp"
 ENV_DATA:
   region: 'us-west-1'
   master_instance_type: 'm5.xlarge'
@@ -14,11 +13,12 @@ ENV_DATA:
   skip_ocs_deployment: true
   skip_ocs_cluster_creation: true
   enable_ocs_plugin: false
-  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-stable-4.16.0"
-  ocs_csv_channel: "stable-4.16"
-  ocs_version: '4.16'
+  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-stable-4.15.0"
+  ocs_csv_channel: "stable-4.15"
+  ocs_version: '4.15'
 REPORTING:
   email:
     skip_notification: true
   messenger:
-    skip_notification: true
+    skip_notification: false
+    type: 'gchat'

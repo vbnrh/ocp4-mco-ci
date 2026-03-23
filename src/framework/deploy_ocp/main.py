@@ -240,17 +240,17 @@ def main(argv=None):
     deployment.deploy_ocs(log_cli_level)
     # Deploy ACM
     deployment.deploy_acm()
+    # Deploy GitOps (MUST be before MCO and DR - DR requires ArgoCD ApplicationSets)
+    deployment.deploy_gitops()
     # Deploy MCO
     deployment.deploy_mco()
     # Configure submariner
     deployment.configure_submariner()
     # import managed cluster
     deployment.aws_import_cluster()
-    # Deploy GitOps
-    deployment.deploy_gitops()
     # SSL certificate exchange
     deployment.ssl_certificate()
-    # Configure discovered DR
+    # Configure discovered DR (requires GitOps to be ready)
     deployment.configure_discovered_dr()
     # Send email report
     deployment.send_email()

@@ -1,21 +1,29 @@
 RUN:
-  client_version: 'latest-4.14'
+  bin_dir: './bin'
+  client_version: '4.21.0-0.nightly'
 DEPLOYMENT:
   force_download_installer: false
-  installer_version : "latest-4.14"
+  installer_version : "4.21.0-0.nightly"
+  # installer_version : "4.18.0-rc.9"
   ssh_key: "~/.ssh/id_rsa.pub"
-  ocp_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp-dev-preview"
+  # ocp_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp"
 ENV_DATA:
+  region: 'us-east-1'
+  worker_replicas: 4
+  master_instance_type: 'm5.xlarge'
+  worker_instance_type: 'm5.2xlarge'
   service_network_cidr: "172.31.0.0/16"
   cluster_network_cidr: "10.132.0.0/14"
   skip_ocp_deployment: false
   skip_ocs_deployment: false
   skip_ocs_cluster_creation: false
   enable_ocs_plugin: true
-  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-stable-4.13.0"
-  ocs_csv_channel: "stable-4.13"
-  ocs_version: '4.13'
+  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-stable-4.21.0"
+  # ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-konflux-upgrade-4.21.0"
+  ocs_csv_channel: "stable-4.21"
+  ocs_version: '4.21'
 MULTICLUSTER:
+  parallel_ocp_deployment: false
   acm_cluster: true
   primary_cluster: true
   configure_submariner: true
@@ -25,10 +33,15 @@ MULTICLUSTER:
   import_managed_clusters: true
   exchange_ssl_certificate: true
   # comment this out for acm unreleased version
-  acm_hub_channel: 'release-2.7'
+  # acm_hub_channel: 'release-2.13'
   # enable this for ACM un-released build
-  # acm_hub_unreleased: true
-  # acm_unreleased_image: "2.8.0-DOWNSTREAM-2023-03-23-14-13-20"
+  acm_hub_unreleased: true
+  acm_unreleased_image: "2.15.1-DOWNSTREAM-2026-01-07-00-36-31"
+  mce_unreleased_image: "2.10.1-DOWNSTREAM-2026-01-07-00-30-39"
+  skip_gitops_deployment: false
+  configure_discovered_dr: true
 REPORTING:
   email:
+    skip_notification: true
+  messenger:
     skip_notification: false

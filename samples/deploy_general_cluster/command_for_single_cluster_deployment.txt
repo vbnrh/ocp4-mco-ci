@@ -1,0 +1,1 @@
+deploy-ocp --email-ids {recipients email id}  --ocp4mcoci-conf samples/deploy_ocp_cluster/override_config.yaml --cluster-name {cluster name} --cluster-path {cluster path}

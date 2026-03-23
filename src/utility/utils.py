@@ -43,22 +43,206 @@ def download_installer(
     bin_dir = os.path.expanduser(bin_dir or config.RUN["bin_dir"])
     installer_filename = "openshift-install"
     installer_binary_path = os.path.join(bin_dir, installer_filename)
-    if (
-        os.path.isfile(installer_binary_path)
-        and force_download
-        and config.cur_index == 0
-    ):
-        delete_file(installer_binary_path)
-    if os.path.isfile(installer_binary_path):
-        logger.debug(f"Installer exists ({installer_binary_path}), skipping download.")
-        # TODO: check installer version
+
+    # Expose the full version (e.g., 4.2.0-0.nightly -> 4.2.0-0.nightly-2019-08-08-103722)
+    version = expose_ocp_version(version)
+
+    # Create a versioned cache directory for installers
+    cache_dir = os.path.join(bin_dir, "installer_cache")
+    cached_installer_path = os.path.join(cache_dir, f"openshift-install-{version}")
+
+    # Handle force download - only delete cached version, keep existing installer as fallback
+    # The existing installer will be overwritten after successful download
+    if force_download and config.cur_index == 0:
+        if os.path.isfile(cached_installer_path):
+            delete_file(cached_installer_path)
+
+    # Check if we have this version cached
+    if os.path.isfile(cached_installer_path):
+        logger.info(f"Using cached installer for version {version}.")
+        # Copy cached version to the main installer path
+        shutil.copy2(cached_installer_path, installer_binary_path)
+    elif os.path.isfile(installer_binary_path):
+        # Check if existing installer matches requested version
+        try:
+            existing_version = get_installer_version(installer_binary_path)
+            if existing_version and version in existing_version:
+                logger.debug(f"Installer exists ({installer_binary_path}) and matches version {version}, skipping download.")
+            else:
+                logger.info(f"Existing installer version ({existing_version}) does not match requested version ({version}).")
+                _download_with_fallback(
+                    version, bin_dir, installer_filename, cached_installer_path,
+                    cache_dir, verify_ssl_certificate, installer_binary_path
+                )
+        except Exception as e:
+            logger.warning(f"Unable to determine existing installer version: {e}. Re-downloading.")
+            _download_with_fallback(
+                version, bin_dir, installer_filename, cached_installer_path,
+                cache_dir, verify_ssl_certificate, installer_binary_path
+            )
     else:
-        version = expose_ocp_version(version)
-        logger.info(f"Downloading openshift installer ({version}).")
-        prepare_bin_dir()
-        # record current working directory and switch to BIN_DIR
-        previous_dir = os.getcwd()
-        os.chdir(bin_dir)
+        _download_with_fallback(
+            version, bin_dir, installer_filename, cached_installer_path,
+            cache_dir, verify_ssl_certificate, installer_binary_path
+        )
+
+    installer_version = exec_cmd(f"{installer_binary_path} version")
+    logger.info(f"OpenShift Installer version: {installer_version}")
+    return installer_binary_path
+
+
+def _find_fallback_installer(cache_dir, requested_version, bin_dir=None):
+    """
+    Find a fallback installer from cache when download fails.
+    Prefers versions matching the same major.minor version, sorted by modification time (newest first).
+    Also checks for existing installer in bin_dir as a last resort.
+
+    Args:
+        cache_dir (str): Path to the installer cache directory
+        requested_version (str): The originally requested version string
+        bin_dir (str): Path to bin directory to check for existing installer
+
+    Returns:
+        str: Path to the best fallback installer, or None if no cached installers exist
+    """
+    cached_installers = []
+
+    # Check cache directory for versioned installers
+    if os.path.exists(cache_dir):
+        for filename in os.listdir(cache_dir):
+            if filename.startswith("openshift-install-"):
+                filepath = os.path.join(cache_dir, filename)
+                if os.path.isfile(filepath):
+                    mtime = os.path.getmtime(filepath)
+                    cached_installers.append((filepath, filename, mtime))
+
+    # Extract major.minor version from requested version (e.g., "4.21" from "4.21.0-0.nightly-...")
+    major_minor = None
+    try:
+        parts = requested_version.split(".")
+        if len(parts) >= 2:
+            major_minor = f"{parts[0]}.{parts[1]}"
+    except Exception:
+        pass
+
+    # Sort by modification time (newest first)
+    if cached_installers:
+        cached_installers.sort(key=lambda x: x[2], reverse=True)
+
+        # First, try to find a matching major.minor version
+        if major_minor:
+            for filepath, filename, _ in cached_installers:
+                version_part = filename.replace("openshift-install-", "")
+                if version_part.startswith(major_minor):
+                    return filepath
+
+        # If no major.minor match, return the most recently modified cached installer
+        return cached_installers[0][0]
+
+    # Fallback: check for existing installer binary in bin_dir (from previous runs before caching was added)
+    if bin_dir:
+        existing_installer = os.path.join(bin_dir, "openshift-install")
+        if os.path.isfile(existing_installer):
+            logger.info(f"Found existing installer at {existing_installer}, using as fallback.")
+            return existing_installer
+
+    return None
+
+
+def _download_with_fallback(
+    version, bin_dir, installer_filename, cached_installer_path,
+    cache_dir, verify_ssl_certificate, installer_binary_path
+):
+    """
+    Attempt to download the installer, falling back to a cached version on failure.
+
+    Args:
+        version (str): Version to download
+        bin_dir (str): Path to bin directory
+        installer_filename (str): Name of the installer binary
+        cached_installer_path (str): Path to store the cached installer
+        cache_dir (str): Path to the cache directory
+        verify_ssl_certificate (bool): Whether to verify SSL certificates
+        installer_binary_path (str): Path to the main installer binary
+    """
+    try:
+        _download_installer_binary(
+            version, bin_dir, installer_filename, cached_installer_path,
+            cache_dir, verify_ssl_certificate
+        )
+        shutil.copy2(cached_installer_path, installer_binary_path)
+    except Exception as e:
+        logger.warning(f"Failed to download installer version {version}: {e}")
+        fallback_path = _find_fallback_installer(cache_dir, version, bin_dir)
+        if fallback_path:
+            fallback_version = os.path.basename(fallback_path).replace("openshift-install-", "")
+            logger.warning(
+                f"Falling back to cached installer: {fallback_version}. "
+                f"Note: This may differ from the requested version {version}."
+            )
+            # Only copy if fallback is different from installer_binary_path
+            if os.path.abspath(fallback_path) != os.path.abspath(installer_binary_path):
+                shutil.copy2(fallback_path, installer_binary_path)
+        else:
+            logger.error("No cached installer available for fallback.")
+            raise
+
+
+def get_installer_version(installer_binary_path):
+    """
+    Get version reported by `openshift-install version`.
+
+    Args:
+        installer_binary_path (str): path to `openshift-install` binary
+
+    Returns:
+        str: version string reported by the installer.
+            None if the installer does not exist or version cannot be determined.
+    """
+    if os.path.isfile(installer_binary_path):
+        try:
+            result = exec_cmd(f"{installer_binary_path} version")
+            # Parse version from output like "openshift-install 4.21.0-0.nightly-2026-03-01-213049"
+            version_output = result.stdout.decode() if hasattr(result, 'stdout') else str(result)
+            for line in version_output.split('\n'):
+                if 'openshift-install' in line.lower():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1]
+            return version_output.strip()
+        except Exception:
+            return None
+    return None
+
+
+def _download_installer_binary(
+    version, bin_dir, installer_filename, cached_installer_path,
+    cache_dir, verify_ssl_certificate
+):
+    """
+    Internal function to download the installer binary and cache it.
+
+    Args:
+        version (str): Version to download
+        bin_dir (str): Path to bin directory
+        installer_filename (str): Name of the installer binary
+        cached_installer_path (str): Path to store the cached installer
+        cache_dir (str): Path to the cache directory
+        verify_ssl_certificate (bool): Whether to verify SSL certificates
+    """
+    logger.info(f"Downloading openshift installer ({version}).")
+    prepare_bin_dir()
+
+    # Ensure cache directory exists
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+        logger.info(f"Created installer cache directory: {cache_dir}")
+
+    # record current working directory and switch to BIN_DIR
+    previous_dir = os.getcwd()
+    os.chdir(bin_dir)
+
+    try:
         if "nightly" in version:
             pull_secret_path = os.path.join(TOP_DIR, "data", "pull-secret")
             cmd = (
@@ -72,12 +256,15 @@ def download_installer(
             download_file(url, tarball, verify=verify_ssl_certificate)
             exec_cmd(f"tar xzvf {tarball} {installer_filename}")
             delete_file(tarball)
+
+        # Cache the downloaded installer
+        downloaded_path = os.path.join(bin_dir, installer_filename)
+        if os.path.isfile(downloaded_path):
+            shutil.copy2(downloaded_path, cached_installer_path)
+            logger.info(f"Cached installer for version {version} at {cached_installer_path}")
+    finally:
         # return to the previous working directory
         os.chdir(previous_dir)
-
-    installer_version = exec_cmd(f"{installer_binary_path} version")
-    logger.info(f"OpenShift Installer version: {installer_version}")
-    return installer_binary_path
 
 
 def get_openshift_client(

@@ -54,9 +54,42 @@ class ACMDeployment(OperatorDeployment):
         )
         clone_repo(constants.ACM_HUB_UNRELEASED_DEPLOY_REPO, acm_hub_deploy_dir)
 
+        # Patch start.sh to fix pod name check for downstream builds
+        logger.info("Patching start.sh to fix downstream pod name check")
+        start_sh_path = os.path.join(acm_hub_deploy_dir, "start.sh")
+
+        # Read the file line by line and patch it
+        with open(start_sh_path, "r") as f:
+            lines = f.readlines()
+
+        patched_lines = []
+        for i, line in enumerate(lines):
+            patched_lines.append(line)
+            # After setting CUSTOM_REGISTRY_IMAGE, also set CUSTOM_REGISTRY_POD_NAME
+            if 'CUSTOM_REGISTRY_IMAGE="acm-dev-catalog"' in line:
+                patched_lines.append('        CUSTOM_REGISTRY_POD_NAME="acm-custom-registry"\n')
+            elif 'CUSTOM_REGISTRY_IMAGE="acm-custom-registry"' in line and 'acm-dev-catalog' not in lines[i-1] if i > 0 else True:
+                patched_lines.append('        CUSTOM_REGISTRY_POD_NAME="acm-custom-registry"\n')
+
+        # Now replace waitForPod calls to use POD_NAME variable
+        final_lines = []
+        for line in patched_lines:
+            if 'waitForPod "${CUSTOM_REGISTRY_IMAGE}"' in line and 'openshift-marketplace' in line:
+                line = line.replace('waitForPod "${CUSTOM_REGISTRY_IMAGE}"', 'waitForPod "${CUSTOM_REGISTRY_POD_NAME}"')
+            final_lines.append(line)
+
+        with open(start_sh_path, "w") as f:
+            f.writelines(final_lines)
+        logger.info("Successfully patched start.sh")
+
         image_tag = config.MULTICLUSTER.get(
             "acm_unreleased_image",
             config.MULTICLUSTER.get("default_acm_unreleased_image"),
+        )
+
+        mce_image_tag = config.MULTICLUSTER.get(
+            "mce_unreleased_image",
+            config.MULTICLUSTER.get("default_mce_unreleased_image"),
         )
 
         kubeconfig_location = os.path.join(
@@ -79,6 +112,8 @@ class ACMDeployment(OperatorDeployment):
                 "DEBUG": "true",
                 "KUBECONFIG": kubeconfig_location,
             }
+            if mce_image_tag:
+                env_vars["MCE_SNAPSHOT_CHOICE"] = mce_image_tag
         else:
             env_vars = {
                 "QUAY_TOKEN": "",
@@ -88,6 +123,8 @@ class ACMDeployment(OperatorDeployment):
                 "DEBUG": "true",
                 "KUBECONFIG": kubeconfig_location,
             }
+            if mce_image_tag:
+                env_vars["MCE_SNAPSHOT_CHOICE"] = mce_image_tag
         for key, value in env_vars.items():
             if value:
                 os.environ[key] = value

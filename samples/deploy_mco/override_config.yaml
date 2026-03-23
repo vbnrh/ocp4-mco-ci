@@ -14,9 +14,9 @@ ENV_DATA:
   skip_ocs_deployment: true
   skip_ocs_cluster_creation: true
   enable_ocs_plugin: false
-  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-stable-4.16.0"
-  ocs_csv_channel: "stable-4.16"
-  ocs_version: '4.16'
+  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-stable-4.20.0"
+  ocs_csv_channel: "stable-4.20"
+  ocs_version: '4.20'
 REPORTING:
   email:
     skip_notification: true

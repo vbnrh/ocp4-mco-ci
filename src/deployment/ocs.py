@@ -13,6 +13,7 @@ from src.ocs.resources.package_manifest import get_selector_for_ocs_operator
 from src.ocs.resources.stroage_cluster import StorageCluster
 from src.deployment.operator_deployment import OperatorDeployment
 from src.utility.exceptions import UnavailableResourceException, CommandFailed
+from src.utility.retry import retry
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +111,10 @@ class OCSDeployment(OperatorDeployment):
                 _ocp.exec_oc_cmd(command=cmd)
 
     @staticmethod
+    @retry(exception_to_check=(CommandFailed, Exception), tries=5, delay=30, backoff=2)
     def verify_storage_cluster(kubeconfig):
         """
-        Verify storage cluster status
+        Verify storage cluster status with retry logic to handle API server connection issues.
         """
         storage_cluster_name = constants.STORAGE_CLUSTER_NAME
         logger.info("Verifying status of storage cluster: %s", storage_cluster_name)
@@ -127,6 +129,16 @@ class OCSDeployment(OperatorDeployment):
         storage_cluster.wait_for_phase(phase="Ready", timeout=600)
 
     @staticmethod
+    @retry(exception_to_check=(CommandFailed, Exception), tries=5, delay=30, backoff=2)
+    def _apply_storage_cluster(kubeconfig, storage_cluster_yaml):
+        """
+        Apply storage cluster with retry logic to handle API server connection issues.
+        """
+        logger.info(f"Applying storage cluster configuration using {kubeconfig}")
+        _ocp = ocp.OCP(cluster_kubeconfig=kubeconfig)
+        _ocp.exec_oc_cmd(f"apply -f {storage_cluster_yaml}")
+
+    @staticmethod
     def deploy_ocs(kubeconfig, skip_cluster_creation):
         # Do not access framework.config directly inside deploy_ocs, it is not thread safe
         if not skip_cluster_creation:
@@ -135,6 +147,7 @@ class OCSDeployment(OperatorDeployment):
             storage_cluster_yaml = constants.STORAGE_CLUSTER_YAML_NEW
             if odf_running_version < VERSION_4_18:
                 storage_cluster_yaml = constants.STORAGE_CLUSTER_YAML_OLD
-            _ocp = ocp.OCP(cluster_kubeconfig=kubeconfig)
-            _ocp.exec_oc_cmd(f"apply -f {storage_cluster_yaml}")
+
+            # Apply storage cluster with retry logic
+            OCSDeployment._apply_storage_cluster(kubeconfig, storage_cluster_yaml)
             OCSDeployment.verify_storage_cluster(kubeconfig)

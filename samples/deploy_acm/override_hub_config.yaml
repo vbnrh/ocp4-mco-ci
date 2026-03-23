@@ -3,7 +3,10 @@ ENV_DATA:
 MULTICLUSTER:
   acm_cluster: true
   primary_cluster: true
-  configure_discovered_dr: false
+  deploy_acm_hub_cluster: true
+  import_managed_clusters: true
+  acm_hub_unreleased: true
+  acm_unreleased_image: "v2.10.1-FC0"
 REPORTING:
   email:
     skip_notification: true

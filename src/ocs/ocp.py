@@ -121,8 +121,8 @@ class OCP(object):
         out_yaml_format=True,
         selector=None,
         all_namespaces=False,
-        retry=0,
-        wait=3,
+        retry=3,
+        wait=5,
         dont_raise=False,
         silent=False,
         field_selector=None,
@@ -233,7 +233,8 @@ class OCP(object):
         self.check_function_supported(self._has_phase)
         self.check_name_is_specified()
         try:
-            data = self.get()
+            # Add retry logic to handle transient API timeouts
+            data = self.get(retry=10, wait=5)
         except CommandFailed:
             log.info(f"Cannot find resource object {self.resource_name}")
             return False
