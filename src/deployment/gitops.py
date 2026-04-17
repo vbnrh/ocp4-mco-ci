@@ -74,6 +74,13 @@ class GitopsDeployment(OperatorDeployment):
         )
         exec_cmd(f"oc apply -f {managedclustersetbinding.name}")
 
+        # Grant applicationset-controller access to PlacementDecisions
+        # Required for clusterDecisionResource generator in ApplicationSets
+        logger.info(
+            "Creating placement RBAC for applicationset-controller"
+        )
+        exec_cmd(f"oc apply -f {constants.GITOPS_PLACEMENT_RBAC_YAML}")
+
         gitops_obj = ocp.OCP(
             resource_name=constants.GITOPS_CLUSTER_NAME,
             namespace=constants.GITOPS_CLUSTER_NAMESPACE,
