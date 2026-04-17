@@ -235,6 +235,8 @@ def main(argv=None):
     deployment.deploy_ocp(log_cli_level)
     # Deploy OCS
     deployment.deploy_ocs(log_cli_level)
+    # Deploy CNV (OpenShift Virtualization)
+    deployment.deploy_cnv()
     # Deploy ACM
     deployment.deploy_acm()
     # Deploy GitOps (MUST be before MCO and DR - DR requires ArgoCD ApplicationSets)
@@ -249,6 +251,8 @@ def main(argv=None):
     deployment.ssl_certificate()
     # Configure discovered DR (requires GitOps to be ready)
     deployment.configure_discovered_dr()
+    # Deploy RDR test workloads (requires DR, GitOps, and ACM ready)
+    deployment.deploy_workloads()
     # Send email report
     deployment.send_email()
     # Send gchat message

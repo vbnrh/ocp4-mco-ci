@@ -21,6 +21,8 @@ from src.utility.utils import (
 from src.utility.email import email_reports
 from src.utility.messenger import message_reports
 from src.deployment.discovered_dr import DiscoveredDR
+from src.deployment.cnv import CNVDeployment
+from src.deployment.workloads import WorkloadDeployment
 
 log = logging.getLogger(__name__)
 
@@ -312,6 +314,33 @@ class Deployment(object):
                 message_reports()
             else:
                 log.warning("Gchat notification will be skipped")
+        framework.config.switch_default_cluster_ctx()
+
+    def deploy_cnv(self):
+        # CNV Deployment
+        try:
+            if framework.config.MULTICLUSTER.get("deploy_cnv"):
+                log.info("Deploying CNV (OpenShift Virtualization)")
+                cnv_deployment = CNVDeployment()
+                cnv_deployment.do_deploy_cnv()
+            else:
+                log.warning("CNV deployment will be skipped")
+        except Exception as ex:
+            log.error("Unable to deploy CNV", exc_info=True)
+        framework.config.switch_default_cluster_ctx()
+
+    def deploy_workloads(self):
+        # Deploy RDR test workloads via ArgoCD ApplicationSets
+        try:
+            framework.config.switch_acm_ctx()
+            if framework.config.MULTICLUSTER.get("deploy_workloads"):
+                log.info("Deploying RDR test workloads")
+                workloads = WorkloadDeployment()
+                workloads.deploy()
+            else:
+                log.warning("Workload deployment will be skipped")
+        except Exception as ex:
+            log.error("Unable to deploy workloads", exc_info=True)
         framework.config.switch_default_cluster_ctx()
 
     def configure_discovered_dr(self):

@@ -71,6 +71,9 @@ GITOPS_SUBSCRIPTION_YAML = os.path.join(
 GITOPS_ROLE_BINDING_YAML = os.path.join(
     TEMPLATE_DIR, "gitops-deployment", "gitops_role_binding.yaml"
 )
+GITOPS_PLACEMENT_RBAC_YAML = os.path.join(
+    TEMPLATE_DIR, "gitops-deployment", "placement_rbac.yaml"
+)
 
 # ACM Hub Parameters
 ACM_HUB_OPERATORGROUP_YAML = os.path.join(
@@ -109,6 +112,21 @@ AUTH_CONFIG_DOCS = (
 
 # Deployment constants
 OCS_CSV_PREFIX = "ocs-operator"
+
+# CNV (OpenShift Virtualization)
+CNV_NAMESPACE = "openshift-cnv"
+CNV_OPERATOR_NAME = "kubevirt-hyperconverged"
+CNV_CATALOG_SOURCE_YAML = os.path.join(
+    TEMPLATE_DIR, "cnv-deployment", "catalog_source.yaml"
+)
+CNV_NS_YAML = os.path.join(TEMPLATE_DIR, "cnv-deployment", "namespace.yaml")
+CNV_SUBSCRIPTION_YAML = os.path.join(
+    TEMPLATE_DIR, "cnv-deployment", "subscription.yaml"
+)
+CNV_HYPERCONVERGED_YAML = os.path.join(
+    TEMPLATE_DIR, "cnv-deployment", "hyperconverged.yaml"
+)
+CNV_CATALOG_SOURCE_NAME = "cnv-nightly-catalog-source"
 
 # Submariner constants
 SUBMARINER_GATEWAY_NODE_LABEL = "submariner.io/gateway=true"
