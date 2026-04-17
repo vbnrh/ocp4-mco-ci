@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import re
 import sys
@@ -11,6 +12,9 @@ from src.utility.exceptions import UnSupportedPlatformException
 from src.utility import utils
 from src.framework.deployment import Deployment
 from src.framework.logger_factory import setup_logging
+from src.framework.preflight import run_preflight_checks, PreflightError
+
+logger = logging.getLogger(__name__)
 
 
 def check_config_requirements():
@@ -228,6 +232,13 @@ def main(argv=None):
     log_cli_level = process_log_level_arg(arguments)
     log_file_path = f"logs/deployment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     setup_logging(log_cli_level, log_file_path)
+
+    # Pre-flight sanity checks
+    try:
+        run_preflight_checks()
+    except PreflightError:
+        logger.error("Aborting deployment due to pre-flight failures.")
+        sys.exit(1)
 
     # Proceed with deployment steps
     deployment = Deployment()
