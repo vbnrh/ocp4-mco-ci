@@ -231,9 +231,6 @@ def main(argv=None):
 
     # Proceed with deployment steps
     deployment = Deployment()
-    deployment.deploy_ocp(log_cli_level)
-
-    deployment = Deployment()
     # Deploy OCP
     deployment.deploy_ocp(log_cli_level)
     # Deploy OCS

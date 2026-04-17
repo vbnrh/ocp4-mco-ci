@@ -11,7 +11,6 @@ import os
 import requests
 import logging
 import json
-
 from src.framework import config
 from src.utility.constants import (
     GCHAT_MESSENGER_NOTIFICATION_STR,

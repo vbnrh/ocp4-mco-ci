@@ -7,6 +7,8 @@ build/*
 bin/
 dist
 data/*
+!data/*.template
+logs/
 external
 *.swp
 /config/*.yaml

@@ -1,0 +1,2 @@
+quay:
+  cli_password: '<base64-encoded-quay-cli-auth-json>'
