@@ -1,0 +1,16 @@
+apiVersion: hco.kubevirt.io/v1beta1
+kind: HyperConverged
+metadata:
+  annotations:
+    kubevirt.kubevirt.io/jsonpatch: '[{ "op": "add", "path": "/spec/configuration/developerConfiguration", "value": { "useEmulation": true } }]'
+  name: kubevirt-hyperconverged
+  namespace: openshift-cnv
+  labels:
+    app: kubevirt-hyperconverged
+spec:
+  evictionStrategy: LiveMigrate
+  featureGates:
+    enableCommonBootImageImport: true
+    withHostPassthroughCPU: false
+    nonRoot: true
+  uninstallStrategy: BlockUninstallIfWorkloadsExist

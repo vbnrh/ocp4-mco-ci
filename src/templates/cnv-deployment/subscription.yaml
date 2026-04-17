@@ -1,0 +1,12 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: kubevirt-hyperconverged
+  namespace: openshift-cnv
+spec:
+  channel: PLACEHOLDER
+  installPlanApproval: Automatic
+  name: kubevirt-hyperconverged
+  source: cnv-nightly-catalog-source
+  sourceNamespace: openshift-marketplace
+  startingCSV: PLACEHOLDER
