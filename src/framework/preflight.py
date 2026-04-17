@@ -128,6 +128,45 @@ def _check_pull_secret(errors, warnings):
     _verify_image_pull_access(pull_secret_path, errors, warnings)
 
 
+def _resolve_nightly_version(version, errors):
+    """
+    Resolve a partial nightly version (e.g. 4.22.0-0.nightly) to the latest
+    accepted full build tag via the OCP release API.
+
+    Returns:
+        str: Full nightly version string, or None on failure
+    """
+    import requests
+
+    url = (
+        f"https://amd64.ocp.releases.ci.openshift.org/api/v1/"
+        f"releasestream/{version}/latest"
+    )
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code != 200:
+            errors.append(
+                f"Cannot resolve OCP nightly version '{version}': "
+                f"API returned {resp.status_code}. "
+                f"Check if the release stream exists."
+            )
+            return None
+        resolved = resp.json().get("name")
+        logger.info(
+            f"[PREFLIGHT] OCP nightly resolved: {version} -> {resolved}"
+        )
+        return resolved
+    except requests.exceptions.ConnectionError:
+        errors.append(
+            f"Cannot reach OCP release API ({url}). "
+            f"Check network connectivity."
+        )
+        return None
+    except Exception as e:
+        errors.append(f"Failed to resolve OCP nightly version: {e}")
+        return None
+
+
 def _verify_image_pull_access(pull_secret_path, errors, warnings):
     """
     Test that the pull secret can actually access key container images.
@@ -135,15 +174,18 @@ def _verify_image_pull_access(pull_secret_path, errors, warnings):
     """
     images_to_check = []
 
-    # OCP nightly release image
+    # OCP nightly: resolve partial tag (e.g. 4.22.0-0.nightly) to full build ID
+    # This also validates registry.ci.openshift.org auth
     installer_version = config.DEPLOYMENT.get("installer_version", "")
     if "nightly" in installer_version:
-        images_to_check.append(
-            (
-                f"registry.ci.openshift.org/ocp/release:{installer_version}",
-                "OCP nightly installer",
+        resolved = _resolve_nightly_version(installer_version, errors)
+        if resolved:
+            images_to_check.append(
+                (
+                    f"registry.ci.openshift.org/ocp/release:{resolved}",
+                    "OCP nightly installer",
+                )
             )
-        )
 
     # OCS registry (catalog source) image
     ocs_image = config.ENV_DATA.get("ocs_registry_image", "")
@@ -175,6 +217,7 @@ def _verify_image_pull_access(pull_secret_path, errors, warnings):
             result = subprocess.run(
                 [
                     "oc", "image", "info",
+                    "--filter-by-os", "linux/amd64",
                     "--registry-config", pull_secret_path,
                     image,
                 ],
