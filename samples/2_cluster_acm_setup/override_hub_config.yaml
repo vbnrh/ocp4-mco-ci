@@ -1,10 +1,9 @@
 RUN:
   bin_dir: './bin'
-  client_version: '4.21.0-0.nightly'
+  client_version: '4.22.0-0.nightly'
 DEPLOYMENT:
   force_download_installer: false
-  installer_version : "4.21.0-0.nightly"
-  # installer_version : "4.18.0-rc.9"
+  installer_version : "4.22.0-0.nightly"
   ssh_key: "~/.ssh/id_ed25519.pub"
   # ocp_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp"
 ENV_DATA:
@@ -18,10 +17,10 @@ ENV_DATA:
   skip_ocs_deployment: false
   skip_ocs_cluster_creation: false
   enable_ocs_plugin: true
-  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-stable-4.21.0"
-  # ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-konflux-upgrade-4.21.0"
-  ocs_csv_channel: "stable-4.21"
-  ocs_version: '4.21'
+  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-stable-4.22.0"
+  ocs_csv_channel: "stable-4.22"
+  ocs_version: '4.22'
+  cnv_version: '4.22'
 MULTICLUSTER:
   parallel_ocp_deployment: false
   acm_cluster: true
@@ -36,10 +35,16 @@ MULTICLUSTER:
   # acm_hub_channel: 'release-2.13'
   # enable this for ACM un-released build
   acm_hub_unreleased: true
-  acm_unreleased_image: "2.15.1-DOWNSTREAM-2026-01-07-00-36-31"
-  mce_unreleased_image: "2.10.1-DOWNSTREAM-2026-01-07-00-30-39"
+  acm_unreleased_image: "2.16.1-DOWNSTREAM-2026-04-14-12-41-13"
+  mce_unreleased_image: "2.11.1-DOWNSTREAM-2026-04-16-18-29-12"
+  deploy_cnv: true
   skip_gitops_deployment: false
   configure_discovered_dr: true
+  deploy_workloads: true
+  workload_types:
+    - busybox_rbd
+    - mysql_rbd
+    - cnv_vm_pvc
 REPORTING:
   email:
     skip_notification: true
