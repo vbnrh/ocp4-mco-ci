@@ -317,8 +317,9 @@ class Deployment(object):
         framework.config.switch_default_cluster_ctx()
 
     def deploy_cnv(self):
-        # CNV Deployment
+        # CNV Deployment — check from hub config since flag lives there
         try:
+            framework.config.switch_acm_ctx()
             if framework.config.MULTICLUSTER.get("deploy_cnv"):
                 log.info("Deploying CNV (OpenShift Virtualization)")
                 cnv_deployment = CNVDeployment()
