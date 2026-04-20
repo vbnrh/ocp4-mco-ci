@@ -22,7 +22,7 @@ ENV_DATA:
   ocs_version: '4.21'
   cnv_version: '4.21'
 MULTICLUSTER:
-  parallel_ocp_deployment: false
+  parallel_ocp_deployment: true
   acm_cluster: true
   primary_cluster: true
   configure_submariner: true
