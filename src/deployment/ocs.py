@@ -64,7 +64,7 @@ class OCSDeployment(OperatorDeployment):
             az_node_list.append(node["metadata"]["name"])
             az_worker_nodes[az] = az_node_list
         logger.debug(f"Found the worker nodes in AZ: {az_worker_nodes}")
-        to_label = 3
+        min_required = 3
         distributed_worker_nodes = []
         while az_worker_nodes:
             for az in list(az_worker_nodes.keys()):
@@ -76,14 +76,14 @@ class OCSDeployment(OperatorDeployment):
                     del az_worker_nodes[az]
         logger.info(f"Distributed worker nodes for AZ: {distributed_worker_nodes}")
         distributed_worker_count = len(distributed_worker_nodes)
-        if distributed_worker_count < to_label:
+        if distributed_worker_count < min_required:
             logger.info(f"All nodes: {nodes}")
             logger.info(f"Distributed worker nodes: {distributed_worker_nodes}")
             raise UnavailableResourceException(
                 f"Not enough distributed worker nodes: {distributed_worker_count} to label: "
             )
         _ocp = ocp.OCP(kind="node")
-        workers_to_label = " ".join(distributed_worker_nodes[:to_label])
+        workers_to_label = " ".join(distributed_worker_nodes)
         if workers_to_label:
             logger.info(
                 f"Label nodes: {workers_to_label} with label: "
