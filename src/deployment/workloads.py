@@ -87,8 +87,10 @@ class WorkloadDeployment:
 
     def create_cnv_vm_prereqs(self, workload_name):
         """
-        Create prerequisites for CNV VM workloads on managed clusters.
-        CNV VMs need an SSH key secret in each workload namespace.
+        Create prerequisites for CNV VM workloads.
+        CNV VMs need an SSH key secret in each workload namespace on BOTH
+        the hub cluster (where namespaces are pre-created) and every managed
+        cluster (where VMs actually run and mount the secret).
         """
         if not workload_name.startswith("cnv_vm"):
             return
@@ -104,20 +106,47 @@ class WorkloadDeployment:
             logger.warning(f"SSH key not found at {ssh_key}, skipping VM secret creation")
             return
 
-        # Extract namespace names from the appset YAMLs
+        # Collect all VM workload namespaces from the appset YAMLs
+        vm_namespaces = []
         for appset_file in appset_files:
             with open(appset_file, "r") as f:
                 content = f.read()
             for line in content.split("\n"):
                 if "namespace:" in line and "openshift-gitops" not in line:
                     ns = line.split("namespace:")[-1].strip()
-                    logger.info(f"Creating VM SSH key secret in namespace {ns}")
-                    exec_cmd(f"oc create ns {ns}", ignore_error=True)
-                    exec_cmd(
-                        f"oc create secret generic vm-secret-1 -n {ns} "
-                        f"--from-file=key={ssh_key}",
-                        ignore_error=True,
-                    )
+                    if ns not in vm_namespaces:
+                        vm_namespaces.append(ns)
+
+        # Create secrets on the hub cluster (current context)
+        for ns in vm_namespaces:
+            logger.info(f"Creating VM SSH key secret in namespace {ns} on hub")
+            exec_cmd(f"oc create ns {ns}", ignore_error=True)
+            exec_cmd(
+                f"oc create secret generic vm-secret-1 -n {ns} "
+                f"--from-file=key={ssh_key}",
+                ignore_error=True,
+            )
+
+        # Create secrets on each managed cluster where VMs will run
+        from src.utility.utils import get_kube_config_path, get_non_acm_cluster_config
+
+        for cluster_conf in get_non_acm_cluster_config():
+            cluster_name = cluster_conf.ENV_DATA["cluster_name"]
+            kubeconfig = get_kube_config_path(cluster_conf.ENV_DATA["cluster_path"])
+            for ns in vm_namespaces:
+                logger.info(
+                    f"Creating VM SSH key secret in namespace {ns} "
+                    f"on managed cluster {cluster_name}"
+                )
+                exec_cmd(
+                    f"oc --kubeconfig {kubeconfig} create ns {ns}",
+                    ignore_error=True,
+                )
+                exec_cmd(
+                    f"oc --kubeconfig {kubeconfig} create secret generic "
+                    f"vm-secret-1 -n {ns} --from-file=key={ssh_key}",
+                    ignore_error=True,
+                )
 
     def deploy_workload_type(self, workload_name):
         """

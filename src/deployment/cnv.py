@@ -1,5 +1,6 @@
 import logging
 import tempfile
+import time
 
 from src.framework import config
 from src.utility import constants, templating
@@ -48,6 +49,10 @@ class CNVDeployment(OperatorDeployment):
         logger.info("Creating HyperConverged resource")
         exec_cmd(f"oc apply -f {constants.CNV_HYPERCONVERGED_YAML}")
         logger.info("Waiting for HyperConverged to become Available")
+        # Wait briefly for the CR status columns to populate, otherwise
+        # get_resource() fails with ValueError when the AVAILABLE column
+        # doesn't exist yet in the oc get output.
+        time.sleep(30)
         hco = OCP(
             resource_name="kubevirt-hyperconverged",
             namespace=constants.CNV_NAMESPACE,
@@ -65,15 +70,28 @@ class CNVDeployment(OperatorDeployment):
     def do_deploy_cnv(self):
         """
         Deploy CNV on all clusters (hub + managed).
+        Each cluster is handled independently so that a failure on one
+        cluster does not skip CNV deployment on the remaining clusters.
         """
+        failed_clusters = []
         if config.multicluster:
             for cluster in config.clusters:
                 index = cluster.MULTICLUSTER["multicluster_index"]
+                cluster_name = cluster.ENV_DATA["cluster_name"]
                 config.switch_ctx(index)
-                logger.info(
-                    f"Deploying CNV for cluster {cluster.ENV_DATA['cluster_name']}"
-                )
-                self.create_cnv_catalog_source()
-                self.deploy_cnv_operator()
-                self.create_hyperconverged()
+                try:
+                    logger.info(f"Deploying CNV for cluster {cluster_name}")
+                    self.create_cnv_catalog_source()
+                    self.deploy_cnv_operator()
+                    self.create_hyperconverged()
+                except Exception:
+                    logger.error(
+                        f"CNV deployment failed on cluster {cluster_name}",
+                        exc_info=True,
+                    )
+                    failed_clusters.append(cluster_name)
             config.switch_default_cluster_ctx()
+        if failed_clusters:
+            raise Exception(
+                f"CNV deployment failed on cluster(s): {', '.join(failed_clusters)}"
+            )
