@@ -34,13 +34,68 @@ class CNVDeployment(OperatorDeployment):
     def deploy_cnv_operator(self):
         """
         Deploy CNV operator via OLM subscription.
+
+        The nightly catalog source may have different channels than the
+        default redhat-operators catalog (e.g. 'nightly-4.21' instead of
+        'stable'). We query the packagemanifest filtered to the nightly
+        catalog to pick the correct channel, avoiding a mismatch where
+        deploy_operator() resolves a CSV from redhat-operators that
+        doesn't exist in the nightly catalog.
         """
         logger.info("Creating CNV namespace and operator group")
         exec_cmd(f"oc apply -f {constants.CNV_NS_YAML}")
-        logger.info("Deploying CNV operator")
+
+        # Find the right channel from the nightly catalog's packagemanifest
+        cnv_channel = self._get_cnv_nightly_channel()
+        logger.info(f"Deploying CNV operator (channel: {cnv_channel})")
         self.deploy_operator(
             subscription_yaml=constants.CNV_SUBSCRIPTION_YAML,
+            channel=cnv_channel,
+            operator_selector=f"catalog={constants.CNV_CATALOG_SOURCE_NAME}",
         )
+
+    def _get_cnv_nightly_channel(self):
+        """
+        Query the nightly catalog's packagemanifest to find the best
+        channel for the configured CNV version.
+
+        Prefers 'nightly-X.Y' channel matching cnv_version, falls back
+        to the catalog's default channel.
+        """
+        cnv_version = config.ENV_DATA.get("cnv_version", "4.21")
+        target_channel = f"nightly-{cnv_version}"
+
+        try:
+            result = exec_cmd(
+                f"oc get packagemanifest kubevirt-hyperconverged "
+                f"-l catalog={constants.CNV_CATALOG_SOURCE_NAME} "
+                f"-n {constants.MARKETPLACE_NAMESPACE} "
+                f"-o jsonpath='{{.items[0].status.channels[*].name}}'"
+            )
+            available_channels = result.stdout.decode().strip("'").split()
+            logger.info(
+                f"CNV nightly catalog channels: {available_channels}"
+            )
+            if target_channel in available_channels:
+                return target_channel
+            logger.warning(
+                f"Channel {target_channel} not found in nightly catalog, "
+                f"available: {available_channels}. Using default channel."
+            )
+            # Fall back to default channel from the nightly catalog
+            result = exec_cmd(
+                f"oc get packagemanifest kubevirt-hyperconverged "
+                f"-l catalog={constants.CNV_CATALOG_SOURCE_NAME} "
+                f"-n {constants.MARKETPLACE_NAMESPACE} "
+                f"-o jsonpath='{{.items[0].status.defaultChannel}}'"
+            )
+            return result.stdout.decode().strip("'")
+        except Exception as e:
+            logger.warning(
+                f"Failed to query nightly catalog channels: {e}. "
+                f"Falling back to {target_channel}"
+            )
+            return target_channel
 
     def create_hyperconverged(self):
         """
