@@ -43,7 +43,6 @@ MULTICLUSTER:
   deploy_workloads: true
   workload_types:
     - busybox_rbd
-    - mysql_rbd
     - cnv_vm_pvc
 REPORTING:
   email:

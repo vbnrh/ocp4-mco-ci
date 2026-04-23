@@ -17,8 +17,6 @@ WORKLOAD_APPSETS = {
     "busybox_rbd": "busybox-rbd",
     "busybox_cephfs": "busybox-cephfs",
     "busybox_mix": "busybox-mix",
-    "mysql_rbd": "mysql-rbd",
-    "mysql_cephfs": "mysql-cephfs",
     "cnv_vm_pvc": "cnv-vm-pvc",
     "cnv_vm_dv": "cnv-vm-dv",
     "cnv_vm_dvt": "cnv-vm-dvt",

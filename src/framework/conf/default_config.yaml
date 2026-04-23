@@ -126,7 +126,7 @@ MULTICLUSTER:
   # Deploy test workloads after DR is configured
   deploy_workloads: false
   # List of workload types to deploy (empty = all)
-  # Options: busybox_rbd, busybox_cephfs, busybox_mix, mysql_rbd, mysql_cephfs,
+  # Options: busybox_rbd, busybox_cephfs, busybox_mix,
   #          cnv_vm_pvc, cnv_vm_dv, cnv_vm_dvt
   workload_types: []
 
