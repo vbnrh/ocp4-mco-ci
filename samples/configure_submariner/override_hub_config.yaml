@@ -4,7 +4,7 @@ RUN:
 DEPLOYMENT:
   force_download_installer: false
   installer_version : "4.16.0-rc.9"
-  ssh_key: "~/.ssh/id_rsa.pub"
+  ssh_key: "~/.ssh/id_ed25519.pub"
   # ocp_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp-dev-preview"
 ENV_DATA:
   region: 'us-east-1'

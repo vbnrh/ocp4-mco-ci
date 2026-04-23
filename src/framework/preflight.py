@@ -24,24 +24,41 @@ class PreflightError(Exception):
     pass
 
 
+def _is_deploying_ocp():
+    """Check if any cluster is actually deploying OCP (not skip_ocp_deployment)."""
+    for cluster in config.clusters:
+        if not cluster.ENV_DATA.get("skip_ocp_deployment"):
+            return True
+    return False
+
+
 def run_preflight_checks():
     """
     Run all pre-flight sanity checks.
     Collects all failures and reports them together.
+
+    When skip_ocp_deployment is set on all clusters (e.g. submariner-only
+    re-runs), skip checks that only apply to cluster creation (SSH key,
+    pull secret image access, CIDR overlap) and instead verify that the
+    existing clusters are reachable.
     """
     errors = []
     warnings = []
+    deploying_ocp = _is_deploying_ocp()
 
     _check_oc_binary(errors)
-    _check_pull_secret(errors, warnings)
-    _check_ssh_key(errors, warnings)
     _check_aws_credentials(errors, warnings)
 
-    if config.multicluster and config.nclusters > 1:
-        _check_cidr_overlap(errors)
+    if deploying_ocp:
+        _check_pull_secret(errors, warnings)
+        _check_ssh_key(errors, warnings)
+        if config.multicluster and config.nclusters > 1:
+            _check_cidr_overlap(errors)
+        _check_template_files(errors)
+        _check_acm_config(errors, warnings)
+    else:
+        _check_cluster_reachability(errors, warnings)
 
-    _check_template_files(errors)
-    _check_acm_config(errors, warnings)
     _check_cluster_config(errors)
 
     # Report
@@ -255,7 +272,7 @@ def _verify_image_pull_access(pull_secret_path, errors, warnings):
 
 
 def _check_ssh_key(errors, warnings):
-    """Verify SSH key exists."""
+    """Verify SSH key exists (only needed when deploying OCP)."""
     ssh_key = os.path.expanduser(
         config.DEPLOYMENT.get("ssh_key", "~/.ssh/id_ed25519.pub")
     )
@@ -447,3 +464,118 @@ def _check_cluster_config(errors):
         region = cluster.ENV_DATA.get("region")
         if not region:
             errors.append(f"Cluster {i} ({name}): region is not set")
+
+
+def _check_cluster_reachability(errors, warnings):
+    """
+    Verify existing clusters are reachable when skip_ocp_deployment is set.
+    Used for day-2 operations like submariner re-runs where clusters
+    already exist and we just need to confirm they're accessible.
+
+    Also checks submariner status if configure_submariner is enabled.
+    """
+    for i, cluster in enumerate(config.clusters):
+        name = cluster.ENV_DATA.get("cluster_name", f"cluster-{i}")
+        cluster_path = cluster.ENV_DATA.get("cluster_path", "")
+        kubeconfig_location = cluster.RUN.get(
+            "kubeconfig_location", "auth/kubeconfig"
+        )
+        kubeconfig = os.path.join(cluster_path, kubeconfig_location)
+
+        if not cluster_path:
+            errors.append(
+                f"Cluster {name}: cluster_path is not set — "
+                f"cannot verify reachability"
+            )
+            continue
+
+        if not os.path.isfile(kubeconfig):
+            errors.append(
+                f"Cluster {name}: kubeconfig not found at {kubeconfig}. "
+                f"Cluster may not have been deployed or path is wrong."
+            )
+            continue
+
+        # Test cluster access with oc whoami
+        try:
+            result = subprocess.run(
+                ["oc", "whoami", "--kubeconfig", kubeconfig],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode != 0:
+                errors.append(
+                    f"Cluster {name}: not reachable "
+                    f"(oc whoami failed: {result.stderr.strip()})"
+                )
+            else:
+                logger.info(
+                    f"[PREFLIGHT] Cluster {name} reachable as "
+                    f"{result.stdout.strip()}"
+                )
+        except subprocess.TimeoutExpired:
+            errors.append(
+                f"Cluster {name}: timeout connecting to cluster. "
+                f"API server may be down."
+            )
+        except Exception as e:
+            errors.append(f"Cluster {name}: error checking reachability: {e}")
+
+    # Check submariner status if this is a submariner run
+    if config.MULTICLUSTER.get("configure_submariner"):
+        _check_submariner_status(warnings)
+
+
+def _check_submariner_status(warnings):
+    """
+    Check if submariner is already installed and healthy on the clusters.
+    This is informational — submariner re-runs are expected to fix issues,
+    so these are warnings, not errors.
+    """
+    for i, cluster in enumerate(config.clusters):
+        name = cluster.ENV_DATA.get("cluster_name", f"cluster-{i}")
+        cluster_path = cluster.ENV_DATA.get("cluster_path", "")
+        kubeconfig_location = cluster.RUN.get(
+            "kubeconfig_location", "auth/kubeconfig"
+        )
+        kubeconfig = os.path.join(cluster_path, kubeconfig_location)
+
+        if not os.path.isfile(kubeconfig):
+            continue
+
+        try:
+            result = subprocess.run(
+                [
+                    "oc", "get", "submariner", "-A",
+                    "--kubeconfig", kubeconfig,
+                    "-o", "jsonpath={.items[*].status.globalCIDR}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode != 0:
+                warnings.append(
+                    f"Cluster {name}: submariner not found or not accessible"
+                )
+            else:
+                global_cidr = result.stdout.strip()
+                if global_cidr:
+                    logger.info(
+                        f"[PREFLIGHT] Cluster {name}: submariner present "
+                        f"(globalCIDR: {global_cidr})"
+                    )
+                else:
+                    warnings.append(
+                        f"Cluster {name}: submariner CR exists but "
+                        f"globalCIDR not set — may need re-configuration"
+                    )
+        except subprocess.TimeoutExpired:
+            warnings.append(
+                f"Cluster {name}: timeout checking submariner status"
+            )
+        except Exception as e:
+            warnings.append(
+                f"Cluster {name}: error checking submariner: {e}"
+            )
