@@ -264,6 +264,8 @@ def main(argv=None):
     deployment.configure_discovered_dr()
     # Deploy RDR test workloads (requires DR, GitOps, and ACM ready)
     deployment.deploy_workloads()
+    # Post-deployment validation (retries 3x before reporting)
+    deployment.run_post_deploy_validation()
     # Send email report
     deployment.send_email()
     # Send gchat message
