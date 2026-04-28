@@ -101,6 +101,8 @@ class OCPDeployment:
     def deploy_ocp(installer_binary_path, cluster_path, log_cli_level="INFO"):
         # Do not access framework.config directly inside deploy_ocp, it is not thread safe
         try:
+            # 4.22+ nightlies require opting out of sigstore image signing verification
+            os.environ["OPENSHIFT_INSTALL_EXPERIMENTAL_DISABLE_IMAGE_POLICY"] = "true"
             utils.exec_cmd(
                 cmd="{bin_dir} create cluster --dir {cluster_dir} --log-level={log_level}".format(
                     bin_dir=installer_binary_path,
