@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 import time
 import multiprocessing as mp
@@ -9,9 +10,10 @@ from src.deployment.mco import MCODeployment
 from src.deployment.acm import ACMDeployment
 from src.deployment.gitops import GitopsDeployment
 from src.deployment.ssl_certificate import SSLCertificate
-from src.deployment.submariner import Submariner
+from src.deployment.submariner import Submariner, run_subctl_cmd
 from src.deployment.import_managed_cluster import ImportManagedCluster
 from src import framework
+from src.utility import constants
 from src.utility.constants import LOG_FORMAT
 from src.utility.utils import (
     is_cluster_running,
@@ -23,6 +25,7 @@ from src.utility.messenger import message_reports
 from src.deployment.discovered_dr import DiscoveredDR
 from src.deployment.cnv import CNVDeployment
 from src.deployment.workloads import WorkloadDeployment
+from src.ocs.ocp import OCP
 
 log = logging.getLogger(__name__)
 
@@ -318,6 +321,9 @@ class Deployment(object):
 
     def deploy_cnv(self):
         # CNV Deployment — check from hub config since flag lives there
+        if not framework.config.multicluster:
+            log.warning("CNV deployment will be skipped (standalone cluster)")
+            return
         try:
             framework.config.switch_acm_ctx()
             if framework.config.MULTICLUSTER.get("deploy_cnv"):
@@ -332,6 +338,9 @@ class Deployment(object):
 
     def deploy_workloads(self):
         # Deploy RDR test workloads via ArgoCD ApplicationSets
+        if not framework.config.multicluster:
+            log.warning("Workload deployment will be skipped (standalone cluster)")
+            return
         try:
             framework.config.switch_acm_ctx()
             if framework.config.MULTICLUSTER.get("deploy_workloads"):
@@ -345,6 +354,9 @@ class Deployment(object):
         framework.config.switch_default_cluster_ctx()
 
     def configure_discovered_dr(self):
+        if not framework.config.multicluster:
+            log.warning("Discovered DR configuration will be skipped (standalone cluster)")
+            return
         try:
             framework.config.switch_acm_ctx()
             if framework.config.MULTICLUSTER["configure_discovered_dr"]:
@@ -356,3 +368,381 @@ class Deployment(object):
         except Exception:
             log.error("Unable to configure discovered DR", exc_info=True)
         framework.config.switch_default_cluster_ctx()
+
+    def run_post_deploy_validation(self):
+        """
+        Run post-deployment validation checks with up to 3 retries.
+        Logs results — does not block notifications on failure.
+        """
+        max_retries = 3
+        retry_delay = 120
+
+        try:
+            for attempt in range(1, max_retries + 1):
+                log.info(
+                    "=" * 60 + f"\n"
+                    f"POST-DEPLOYMENT VALIDATION (attempt {attempt}/{max_retries})\n"
+                    + "=" * 60
+                )
+                results = self._collect_validation_results()
+
+                failed = [r for r in results if r["status"] == "FAIL"]
+                passed = [r for r in results if r["status"] == "PASS"]
+
+                for r in passed:
+                    log.info(
+                        f"  [PASS] {r['component']}: {r['detail']}"
+                    )
+                for r in failed:
+                    log.warning(
+                        f"  [FAIL] {r['component']}: {r['detail']}"
+                    )
+
+                if not failed:
+                    log.info(
+                        f"All {len(passed)} validation checks passed"
+                    )
+                    break
+
+                if attempt < max_retries:
+                    log.warning(
+                        f"{len(failed)} check(s) failed, "
+                        f"retrying in {retry_delay}s..."
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    log.error(
+                        "=" * 60 + "\n"
+                        f"VALIDATION FAILED — {len(failed)} check(s) "
+                        f"still failing after {max_retries} attempts:\n"
+                        + "=" * 60
+                    )
+                    for r in failed:
+                        log.error(
+                            f"  {r['component']}: {r['detail']}"
+                        )
+        except Exception:
+            log.error(
+                "Post-deployment validation encountered an error",
+                exc_info=True,
+            )
+
+    def _collect_validation_results(self):
+        """
+        Collect validation results from all deployed components.
+        Returns list of {"component", "status", "detail"} dicts.
+        """
+        results = []
+
+        for i in range(framework.config.nclusters):
+            framework.config.switch_ctx(i)
+            name = framework.config.ENV_DATA["cluster_name"]
+
+            # Nodes — always check
+            results.append(self._check_nodes(name))
+
+            # StorageCluster
+            if not framework.config.ENV_DATA.get(
+                "skip_ocs_deployment", True
+            ):
+                results.append(self._check_storage_cluster(name))
+
+            # CNV HyperConverged
+            if framework.config.MULTICLUSTER.get("deploy_cnv"):
+                results.append(self._check_cnv(name))
+
+            # ACM MultiClusterHub (hub only)
+            if (
+                framework.config.MULTICLUSTER.get("deploy_acm_hub_cluster")
+                and framework.config.get_acm_index() == i
+            ):
+                results.append(self._check_acm(name))
+
+        # Cross-cluster checks from hub context
+        if framework.config.multicluster:
+            framework.config.switch_acm_ctx()
+
+            if framework.config.MULTICLUSTER.get("configure_submariner"):
+                results.append(self._check_submariner())
+
+            if framework.config.MULTICLUSTER.get("configure_discovered_dr"):
+                results.extend(self._check_dr())
+
+            if framework.config.MULTICLUSTER.get("deploy_workloads"):
+                results.append(self._check_workloads())
+
+        framework.config.switch_default_cluster_ctx()
+        return results
+
+    def _check_nodes(self, cluster_name):
+        try:
+            nodes = OCP(kind="node")
+            node_data = nodes.get().get("items", [])
+            not_ready = []
+            for node in node_data:
+                node_name = node["metadata"]["name"]
+                conditions = node.get("status", {}).get("conditions", [])
+                ready = any(
+                    c["type"] == "Ready" and c["status"] == "True"
+                    for c in conditions
+                )
+                if not ready:
+                    not_ready.append(node_name)
+            if not_ready:
+                return {
+                    "component": f"Nodes ({cluster_name})",
+                    "status": "FAIL",
+                    "detail": f"{len(not_ready)} not ready: "
+                    + ", ".join(not_ready),
+                }
+            return {
+                "component": f"Nodes ({cluster_name})",
+                "status": "PASS",
+                "detail": f"{len(node_data)} nodes ready",
+            }
+        except Exception as e:
+            return {
+                "component": f"Nodes ({cluster_name})",
+                "status": "FAIL",
+                "detail": str(e),
+            }
+
+    def _check_storage_cluster(self, cluster_name):
+        try:
+            sc = OCP(
+                resource_name=constants.STORAGE_CLUSTER_NAME,
+                namespace=constants.OPENSHIFT_STORAGE_NAMESPACE,
+                kind="StorageCluster",
+            )
+            phase = sc.get_resource(
+                constants.STORAGE_CLUSTER_NAME, "PHASE"
+            )
+            if phase == "Ready":
+                return {
+                    "component": f"StorageCluster ({cluster_name})",
+                    "status": "PASS",
+                    "detail": "Ready",
+                }
+            return {
+                "component": f"StorageCluster ({cluster_name})",
+                "status": "FAIL",
+                "detail": f"Phase={phase}",
+            }
+        except Exception as e:
+            return {
+                "component": f"StorageCluster ({cluster_name})",
+                "status": "FAIL",
+                "detail": str(e),
+            }
+
+    def _check_cnv(self, cluster_name):
+        try:
+            hco = OCP(
+                resource_name="kubevirt-hyperconverged",
+                namespace=constants.CNV_NAMESPACE,
+                kind="HyperConverged",
+            )
+            available = hco.get_resource(
+                "kubevirt-hyperconverged", "AVAILABLE"
+            )
+            if available == "True":
+                return {
+                    "component": f"CNV HyperConverged ({cluster_name})",
+                    "status": "PASS",
+                    "detail": "Available=True",
+                }
+            return {
+                "component": f"CNV HyperConverged ({cluster_name})",
+                "status": "FAIL",
+                "detail": f"Available={available}",
+            }
+        except Exception as e:
+            return {
+                "component": f"CNV HyperConverged ({cluster_name})",
+                "status": "FAIL",
+                "detail": str(e),
+            }
+
+    def _check_acm(self, cluster_name):
+        try:
+            mch = OCP(
+                kind=constants.ACM_MULTICLUSTER_HUB,
+                namespace=constants.ACM_HUB_NAMESPACE,
+            )
+            status = mch.get_resource(
+                constants.ACM_MULTICLUSTER_RESOURCE, "STATUS"
+            )
+            if status == constants.STATUS_RUNNING:
+                return {
+                    "component": f"ACM MultiClusterHub ({cluster_name})",
+                    "status": "PASS",
+                    "detail": "Running",
+                }
+            return {
+                "component": f"ACM MultiClusterHub ({cluster_name})",
+                "status": "FAIL",
+                "detail": f"Status={status}",
+            }
+        except Exception as e:
+            return {
+                "component": f"ACM MultiClusterHub ({cluster_name})",
+                "status": "FAIL",
+                "detail": str(e),
+            }
+
+    def _check_submariner(self):
+        try:
+            for i in range(framework.config.nclusters):
+                cluster = framework.config.clusters[i]
+                kube_config_path = get_kube_config_path(
+                    cluster.ENV_DATA["cluster_path"]
+                )
+                connect_check = (
+                    f"show connections --kubeconfig {kube_config_path}"
+                )
+                run_subctl_cmd(connect_check)
+            return {
+                "component": "Submariner",
+                "status": "PASS",
+                "detail": "Connections verified",
+            }
+        except Exception as e:
+            return {
+                "component": "Submariner",
+                "status": "FAIL",
+                "detail": str(e),
+            }
+
+    def _check_dr(self):
+        results = []
+        try:
+            # MirrorPeer
+            mp_ocp = OCP(
+                kind="MirrorPeer",
+                namespace=constants.OPENSHIFT_STORAGE_NAMESPACE,
+            )
+            mp_data = mp_ocp.get().get("items", [])
+            if mp_data:
+                phase = (
+                    mp_data[0]
+                    .get("status", {})
+                    .get("phase", "Unknown")
+                )
+                if phase == "ExchangedSecret":
+                    results.append({
+                        "component": "MirrorPeer",
+                        "status": "PASS",
+                        "detail": "ExchangedSecret",
+                    })
+                else:
+                    results.append({
+                        "component": "MirrorPeer",
+                        "status": "FAIL",
+                        "detail": f"Phase={phase}",
+                    })
+            else:
+                results.append({
+                    "component": "MirrorPeer",
+                    "status": "FAIL",
+                    "detail": "No MirrorPeer resource found",
+                })
+        except Exception as e:
+            results.append({
+                "component": "MirrorPeer",
+                "status": "FAIL",
+                "detail": str(e),
+            })
+
+        try:
+            # DRPolicy
+            drp = OCP(kind="DRPolicy")
+            drp_data = drp.get().get("items", [])
+            if drp_data:
+                conditions = (
+                    drp_data[0]
+                    .get("status", {})
+                    .get("conditions", [])
+                )
+                reason = (
+                    conditions[0].get("reason", "Unknown")
+                    if conditions
+                    else "NoConditions"
+                )
+                if reason == "Succeeded":
+                    results.append({
+                        "component": "DRPolicy",
+                        "status": "PASS",
+                        "detail": "Succeeded",
+                    })
+                else:
+                    results.append({
+                        "component": "DRPolicy",
+                        "status": "FAIL",
+                        "detail": f"Reason={reason}",
+                    })
+            else:
+                results.append({
+                    "component": "DRPolicy",
+                    "status": "FAIL",
+                    "detail": "No DRPolicy resource found",
+                })
+        except Exception as e:
+            results.append({
+                "component": "DRPolicy",
+                "status": "FAIL",
+                "detail": str(e),
+            })
+
+        return results
+
+    def _check_workloads(self):
+        try:
+            apps = (
+                OCP(
+                    kind="Application.argoproj.io",
+                    namespace="openshift-gitops",
+                )
+                .get()
+                .get("items", [])
+            )
+            if not apps:
+                return {
+                    "component": "ArgoCD Applications",
+                    "status": "FAIL",
+                    "detail": "No applications found",
+                }
+            degraded = []
+            for app in apps:
+                name = app["metadata"]["name"]
+                health = (
+                    app.get("status", {})
+                    .get("health", {})
+                    .get("status", "Unknown")
+                )
+                sync = (
+                    app.get("status", {})
+                    .get("sync", {})
+                    .get("status", "Unknown")
+                )
+                if health != "Healthy" or sync != "Synced":
+                    degraded.append(
+                        f"{name}(health={health},sync={sync})"
+                    )
+            if degraded:
+                return {
+                    "component": "ArgoCD Applications",
+                    "status": "FAIL",
+                    "detail": f"{len(degraded)}/{len(apps)} degraded: "
+                    + ", ".join(degraded),
+                }
+            return {
+                "component": "ArgoCD Applications",
+                "status": "PASS",
+                "detail": f"{len(apps)}/{len(apps)} healthy",
+            }
+        except Exception as e:
+            return {
+                "component": "ArgoCD Applications",
+                "status": "FAIL",
+                "detail": str(e),
+            }
