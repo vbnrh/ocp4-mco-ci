@@ -6,7 +6,6 @@ from src.framework import config
 from src.utility import constants, templating
 from src.utility.cmd import exec_cmd
 from src.deployment.operator_deployment import OperatorDeployment
-from src.ocs.ocp import OCP
 
 logger = logging.getLogger(__name__)
 
@@ -104,23 +103,24 @@ class CNVDeployment(OperatorDeployment):
         logger.info("Creating HyperConverged resource")
         exec_cmd(f"oc apply -f {constants.CNV_HYPERCONVERGED_YAML}")
         logger.info("Waiting for HyperConverged to become Available")
-        # Wait briefly for the CR status columns to populate, otherwise
-        # get_resource() fails with ValueError when the AVAILABLE column
-        # doesn't exist yet in the oc get output.
-        time.sleep(30)
-        hco = OCP(
-            resource_name="kubevirt-hyperconverged",
-            namespace=constants.CNV_NAMESPACE,
-            kind="HyperConverged",
-        )
-        hco.wait_for_resource(
-            condition="True",
-            resource_name="kubevirt-hyperconverged",
-            column="AVAILABLE",
-            timeout=900,
-            sleep=15,
-        )
-        logger.info("HyperConverged deployment succeeded")
+        # HyperConverged in 4.21+ doesn't expose AVAILABLE as a table column,
+        # so check the Available condition via jsonpath instead.
+        for _ in range(60):
+            try:
+                result = exec_cmd(
+                    "oc get hyperconverged kubevirt-hyperconverged"
+                    f" -n {constants.CNV_NAMESPACE}"
+                    " -o jsonpath='{.status.conditions[?(@.type==\"Available\")].status}'"
+                )
+                status = result.stdout.decode().strip().strip("'")
+                if status == "True":
+                    logger.info("HyperConverged deployment succeeded")
+                    return
+                logger.debug(f"HyperConverged Available={status}, waiting...")
+            except Exception:
+                logger.debug("HyperConverged status not ready yet, waiting...")
+            time.sleep(15)
+        raise Exception("HyperConverged did not become Available within timeout")
 
     def do_deploy_cnv(self):
         """

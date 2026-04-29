@@ -537,14 +537,12 @@ class Deployment(object):
 
     def _check_cnv(self, cluster_name):
         try:
-            hco = OCP(
-                resource_name="kubevirt-hyperconverged",
-                namespace=constants.CNV_NAMESPACE,
-                kind="HyperConverged",
+            result = exec_cmd(
+                "oc get hyperconverged kubevirt-hyperconverged"
+                f" -n {constants.CNV_NAMESPACE}"
+                " -o jsonpath='{.status.conditions[?(@.type==\"Available\")].status}'"
             )
-            available = hco.get_resource(
-                "kubevirt-hyperconverged", "AVAILABLE"
-            )
+            available = result.stdout.decode().strip().strip("'")
             if available == "True":
                 return {
                     "component": f"CNV HyperConverged ({cluster_name})",
