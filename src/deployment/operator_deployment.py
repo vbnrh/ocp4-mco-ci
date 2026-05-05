@@ -250,12 +250,22 @@ class OperatorDeployment(object):
         self.wait_for_subscription()
         logger.info(f"Sleeping for {sleep} seconds after subscribing Operator")
         time.sleep(sleep)
-        subscriptions = ocp.OCP(
-            kind=constants.SUBSCRIPTION_WITH_ACM,
-            resource_name=self.name,
-            namespace=self.namespace,
-        ).get()
-        csv_name = subscriptions["status"]["currentCSV"]
+        csv_name = None
+        for _ in range(24):
+            subscriptions = ocp.OCP(
+                kind=constants.SUBSCRIPTION_WITH_ACM,
+                resource_name=self.name,
+                namespace=self.namespace,
+            ).get()
+            csv_name = subscriptions.get("status", {}).get("currentCSV")
+            if csv_name:
+                break
+            logger.info("Waiting for subscription currentCSV to be populated...")
+            time.sleep(5)
+        if not csv_name:
+            raise TimeoutError(
+                f"Subscription {self.name} did not populate currentCSV within 120s"
+            )
         csv = CSV(resource_name=csv_name, namespace=self.namespace)
         csv.wait_for_phase("Succeeded", timeout=720)
         logger.info("Operator Deployment Succeeded")
