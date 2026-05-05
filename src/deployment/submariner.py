@@ -220,9 +220,16 @@ class Submariner(object):
     @retry(CommandFailed, tries=5, delay=30, backoff=1)
     def prepare_aws_cloud(self, cluster):
         infra_id = get_infra_id(cluster.ENV_DATA["cluster_path"])
-        # FIX: Add explicit --kubeconfig parameter (follows official Submariner docs)
         kubeconfig_path = get_kube_config_path(cluster.ENV_DATA['cluster_path'])
-        prepare_cmd = f'cloud prepare aws --kubeconfig {kubeconfig_path} --ocp-metadata {cluster.ENV_DATA["cluster_path"]}/metadata.json --region {cluster.ENV_DATA["region"]}'
+        # subctl ignores AWS_PROFILE env var and defaults to "default" profile,
+        # so we must pass --profile explicitly when a non-default profile is set.
+        aws_profile = os.environ.get("AWS_PROFILE", "default")
+        prepare_cmd = (
+            f'cloud prepare aws --kubeconfig {kubeconfig_path}'
+            f' --ocp-metadata {cluster.ENV_DATA["cluster_path"]}/metadata.json'
+            f' --region {cluster.ENV_DATA["region"]}'
+            f' --profile {aws_profile}'
+        )
         run_subctl_cmd(prepare_cmd)
 
     @retry(CommandFailed, tries=5, delay=60, backoff=1)
