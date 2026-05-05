@@ -15,6 +15,7 @@ from src.deployment.import_managed_cluster import ImportManagedCluster
 from src import framework
 from src.utility import constants
 from src.utility.constants import LOG_FORMAT
+from src.utility.cmd import exec_cmd
 from src.utility.utils import (
     is_cluster_running,
     get_non_acm_cluster_config,
@@ -148,6 +149,12 @@ class Deployment(object):
                 proc.join()
 
     def deploy_mco(self):
+        if not getattr(self, '_gitops_deployed', False):
+            log.warning(
+                "Skipping MCO deployment — GitOps is not deployed "
+                "(MCO's odf-multicluster-orchestrator requires ArgoCD APIs)"
+            )
+            return
         # MCO Deployment
         for i in range(framework.config.nclusters):
             try:
@@ -236,7 +243,7 @@ class Deployment(object):
         framework.config.switch_default_cluster_ctx()
 
     def deploy_gitops(self):
-        # MCO Deployment
+        self._gitops_deployed = False
         for i in range(framework.config.nclusters):
             try:
                 framework.config.switch_ctx(i)
@@ -255,6 +262,7 @@ class Deployment(object):
                                 GitopsDeployment.deploy_gitops()
                             else:
                                 gitops_deployment.gitops_role_binding()
+                        self._gitops_deployed = True
                     else:
                         log.warning("GitOps deployment will be skipped")
             except Exception as ex:
