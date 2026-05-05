@@ -48,7 +48,7 @@ ENV_DATA:
   master_replicas: 3
   worker_replicas: 3
   skip_ocp_deployment: false
-  base_domain: 'devcluster.openshift.com'
+  base_domain: 'odf-devcluster.com'
   # The subnet prefix length to assign to each individual node.
   # For example, if hostPrefix is set to 23, then each node is assigned a /23 subnet out of the given cidr,
   # which allows for 510 (2^(32 - 23) - 2) pod IPs addresses.
