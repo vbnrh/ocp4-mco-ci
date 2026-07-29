@@ -2,6 +2,7 @@ import schedule
 import datetime
 import time
 import os
+import fnmatch
 import yaml
 
 with open('./config/env.dr.yaml', 'r') as env_file:
@@ -12,11 +13,33 @@ def get_suffix():
     month = nowtime.strftime("%b").lower()
     day = str(nowtime.day)
     year = str(nowtime.year)[2:]
-    return month + '-' + day + '-' + year 
+    return month + '-' + day + '-' + year
+
+def resolve_cached_installer(cache_version):
+    cache_dir = os.path.join('.', 'bin', 'installer_cache')
+    if not os.path.isdir(cache_dir):
+        return None
+    pattern = f"openshift-install-{cache_version}"
+    matches = []
+    for f in os.listdir(cache_dir):
+        if fnmatch.fnmatch(f, pattern) and os.path.isfile(os.path.join(cache_dir, f)):
+            matches.append(f)
+    if not matches:
+        return None
+    matches.sort(reverse=True)
+    version = matches[0].replace("openshift-install-", "", 1)
+    print(f"[cache] Resolved {cache_version} -> {version}")
+    return version
 
 def job():
     try:
         print("executing")
+        if environment.get('use_installer_cache') and environment.get('cache_version'):
+            resolved = resolve_cached_installer(environment['cache_version'])
+            if resolved:
+                os.environ['OCP_INSTALLER_VERSION'] = resolved
+            else:
+                print(f"[cache] No match for '{environment['cache_version']}' in bin/installer_cache/")
         suffix = get_suffix()
         multicluster_cmd =  "deploy-ocp multicluster 2"
         if 'webhook_url' in environment:
