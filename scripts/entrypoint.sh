@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-BUNDLED_VERSION="4.22.0-0.nightly-2026-07-16-135205"
-REQUESTED="${OCP_VERSION:-$BUNDLED_VERSION}"
+DEFAULT_VERSION="4.22.0-0.nightly-2026-07-16-135205"
+REQUESTED="${OCP_VERSION:-$DEFAULT_VERSION}"
 
 if [ "$REQUESTED" = "latest" ]; then
   echo "Resolving latest nightly..."
@@ -11,8 +11,8 @@ if [ "$REQUESTED" = "latest" ]; then
   echo "Resolved: $REQUESTED"
 fi
 
-if [ "$REQUESTED" != "$BUNDLED_VERSION" ]; then
-  echo "Downloading openshift-install $REQUESTED (bundled: $BUNDLED_VERSION)..."
+if [ ! -x /app/bin/openshift-install ] || ! /app/bin/openshift-install version 2>/dev/null | grep -q "$REQUESTED"; then
+  echo "Downloading openshift-install $REQUESTED..."
   oc adm release extract \
     --registry-config /app/data/pull-secret \
     --command=openshift-install \
@@ -21,7 +21,7 @@ if [ "$REQUESTED" != "$BUNDLED_VERSION" ]; then
   chmod +x /app/bin/openshift-install
   echo "Downloaded: $(/app/bin/openshift-install version | head -1)"
 else
-  echo "Using bundled installer: $BUNDLED_VERSION"
+  echo "Using existing installer: $REQUESTED"
 fi
 
 export OCP_INSTALLER_VERSION="$REQUESTED"

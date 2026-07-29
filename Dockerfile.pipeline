@@ -18,20 +18,7 @@ RUN pip install --no-cache-dir -e .
 
 COPY . .
 
-ARG BUNDLED_OCP_VERSION=4.22.0-0.nightly-2026-07-16-135205
-ARG PULL_SECRET_PATH=data/pull-secret
 RUN mkdir -p /app/bin /app/logs /app/data
-
-# Bundle the pinned installer (Linux amd64) during build
-# Requires --secret id=pullsecret,src=data/pull-secret at build time
-RUN --mount=type=secret,id=pullsecret \
-    oc adm release extract \
-      --registry-config /run/secrets/pullsecret \
-      --command=openshift-install \
-      --to /app/bin/ \
-      "registry.ci.openshift.org/ocp/release:${BUNDLED_OCP_VERSION}" && \
-    chmod +x /app/bin/openshift-install && \
-    /app/bin/openshift-install version | head -1
 
 COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
