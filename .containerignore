@@ -1,0 +1,17 @@
+venv/
+.git/
+logs/
+bin/installer_cache/
+bin/openshift-install
+bin/oc
+bin/kubectl
+bin/subctl
+external/
+submariner_downloader_*
+*.pyc
+__pycache__/
+.DS_Store
+broker-info.subm
+kubeconfig
+docs/
+.claude/

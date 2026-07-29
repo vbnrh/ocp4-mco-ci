@@ -1,0 +1,44 @@
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git tar jq curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+    -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+RUN curl -sL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/openshift-client-linux.tar.gz \
+    | tar xz -C /usr/local/bin oc kubectl && chmod +x /usr/local/bin/oc /usr/local/bin/kubectl
+
+WORKDIR /app
+
+COPY setup.py setup.cfg* ./
+COPY src/ src/
+RUN pip install --no-cache-dir -e .
+
+COPY . .
+
+ARG BUNDLED_OCP_VERSION=4.22.0-0.nightly-2026-07-16-135205
+ARG PULL_SECRET_PATH=data/pull-secret
+RUN mkdir -p /app/bin /app/logs /app/data
+
+# Bundle the pinned installer (Linux amd64) during build
+# Requires --secret id=pullsecret,src=data/pull-secret at build time
+RUN --mount=type=secret,id=pullsecret \
+    oc adm release extract \
+      --registry-config /run/secrets/pullsecret \
+      --command=openshift-install \
+      --to /app/bin/ \
+      "registry.ci.openshift.org/ocp/release:${BUNDLED_OCP_VERSION}" && \
+    chmod +x /app/bin/openshift-install && \
+    /app/bin/openshift-install version | head -1
+
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+RUN sed -i "s/use_installer_cache: .*/use_installer_cache: false/" /app/config/env.dr.yaml 2>/dev/null || true
+RUN sed -i "s/schedule_time_deploy: .*/schedule_time_deploy: '00:01'/" /app/config/env.dr.yaml 2>/dev/null || true
+
+ENV PATH="/app/bin:/usr/local/bin:${PATH}"
+
+ENTRYPOINT ["/entrypoint.sh"]
