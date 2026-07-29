@@ -18,14 +18,32 @@ SCHEDULE_DEPLOY=""
 SCHEDULE_CLEANUP=""
 SCHEDULE_SUB=""
 WEBHOOK=""
+USE_IST=false
+
+# Convert IST (HH:MM) to UTC (HH:MM) by subtracting 5:30
+ist_to_utc() {
+  local hh="${1%%:*}"
+  local mm="${1##*:}"
+  mm=$((10#$mm - 30))
+  hh=$((10#$hh - 5))
+  if [ "$mm" -lt 0 ]; then
+    mm=$((mm + 60))
+    hh=$((hh - 1))
+  fi
+  if [ "$hh" -lt 0 ]; then
+    hh=$((hh + 24))
+  fi
+  printf "%02d:%02d" "$hh" "$mm"
+}
 
 usage() {
   echo "Usage: $0 [OPTIONS]"
   echo "  --version <version|latest>   OCP nightly version (default: 4.22.0-0.nightly-2026-07-16-135205)"
-  echo "  --deploy-at <HH:MM>          Schedule deploy time in UTC (default: now + 2 min)"
-  echo "  --cleanup-at <HH:MM>         Schedule cleanup time in UTC (default: 20:00)"
-  echo "  --sub-at <HH:MM>             Schedule submariner deploy time in UTC (default: 09:30)"
+  echo "  --deploy-at <HH:MM>          Schedule deploy time (default: now + 2 min)"
+  echo "  --cleanup-at <HH:MM>         Schedule cleanup time (default: 20:00 IST / 14:30 UTC)"
+  echo "  --sub-at <HH:MM>             Schedule submariner deploy time (default: 09:30 IST / 04:00 UTC)"
   echo "  --webhook <url>              Slack webhook URL"
+  echo "  --ist                        Interpret --*-at times as IST (default: UTC)"
   echo "  --cleanup                    Terminate EC2 and delete bastion VPC"
   exit 1
 }
@@ -37,10 +55,18 @@ while [[ $# -gt 0 ]]; do
     --cleanup-at) SCHEDULE_CLEANUP="$2"; shift 2 ;;
     --sub-at) SCHEDULE_SUB="$2"; shift 2 ;;
     --webhook) WEBHOOK="$2"; shift 2 ;;
+    --ist) USE_IST=true; shift ;;
     --cleanup) CLEANUP=true; shift ;;
     *) usage ;;
   esac
 done
+
+# Convert IST to UTC if --ist flag was passed
+if [ "$USE_IST" = true ]; then
+  [ -n "$SCHEDULE_DEPLOY" ] && SCHEDULE_DEPLOY=$(ist_to_utc "$SCHEDULE_DEPLOY") && echo "Deploy: $SCHEDULE_DEPLOY UTC"
+  [ -n "$SCHEDULE_CLEANUP" ] && SCHEDULE_CLEANUP=$(ist_to_utc "$SCHEDULE_CLEANUP") && echo "Cleanup: $SCHEDULE_CLEANUP UTC"
+  [ -n "$SCHEDULE_SUB" ] && SCHEDULE_SUB=$(ist_to_utc "$SCHEDULE_SUB") && echo "Submariner: $SCHEDULE_SUB UTC"
+fi
 
 # --- Cleanup mode ---
 if [ "$CLEANUP" = true ]; then
