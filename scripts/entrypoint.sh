@@ -28,4 +28,17 @@ export OCP_INSTALLER_VERSION="$REQUESTED"
 export PATH="/app/bin:$PATH"
 
 cd /app
+
+# Configure env.dr.yaml from environment variables
+ENV_FILE="/app/config/env.dr.yaml"
+if [ -f "$ENV_FILE" ]; then
+  DEPLOY_TIME="${SCHEDULE_DEPLOY:-$(date -u -d '+2 minutes' '+%H:%M' 2>/dev/null || date -u -v+2M '+%H:%M')}"
+  sed -i "s|schedule_time_deploy: .*|schedule_time_deploy: '$DEPLOY_TIME'|" "$ENV_FILE"
+  [ -n "$SCHEDULE_CLEANUP" ] && sed -i "s|schedule_time_cleanup: .*|schedule_time_cleanup: '$SCHEDULE_CLEANUP'|" "$ENV_FILE"
+  [ -n "$SCHEDULE_SUB" ] && sed -i "s|schedule_time_deploy_sub: .*|schedule_time_deploy_sub: '$SCHEDULE_SUB'|" "$ENV_FILE"
+  [ -n "$WEBHOOK_URL" ] && sed -i "s|webhook_url: .*|webhook_url: '$WEBHOOK_URL'|" "$ENV_FILE"
+  sed -i "s|use_installer_cache: .*|use_installer_cache: false|" "$ENV_FILE"
+  echo "env.dr.yaml configured: deploy=$DEPLOY_TIME"
+fi
+
 exec python3 scripts/deploy-dr-ocp.py "$@"

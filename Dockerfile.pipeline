@@ -23,8 +23,6 @@ RUN mkdir -p /app/bin /app/logs /app/data
 COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-RUN sed -i "s/use_installer_cache: .*/use_installer_cache: false/" /app/config/env.dr.yaml 2>/dev/null || true
-RUN sed -i "s/schedule_time_deploy: .*/schedule_time_deploy: '00:01'/" /app/config/env.dr.yaml 2>/dev/null || true
 
 ENV PATH="/app/bin:/usr/local/bin:${PATH}"
 

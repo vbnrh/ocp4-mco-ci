@@ -14,16 +14,29 @@ BASTION_FILE="$(dirname "$0")/../config/bastion.yaml"
 AWS="aws --region $REGION"
 VERSION=""
 
+SCHEDULE_DEPLOY=""
+SCHEDULE_CLEANUP=""
+SCHEDULE_SUB=""
+WEBHOOK=""
+
 usage() {
-  echo "Usage: $0 [--version <ocp-version|latest>] [--cleanup]"
-  echo "  --version   OCP nightly version (default: bundled jul-16)"
-  echo "  --cleanup   Terminate EC2 and delete bastion VPC"
+  echo "Usage: $0 [OPTIONS]"
+  echo "  --version <version|latest>   OCP nightly version (default: 4.22.0-0.nightly-2026-07-16-135205)"
+  echo "  --deploy-at <HH:MM>          Schedule deploy time in UTC (default: now + 2 min)"
+  echo "  --cleanup-at <HH:MM>         Schedule cleanup time in UTC (default: 20:00)"
+  echo "  --sub-at <HH:MM>             Schedule submariner deploy time in UTC (default: 09:30)"
+  echo "  --webhook <url>              Slack webhook URL"
+  echo "  --cleanup                    Terminate EC2 and delete bastion VPC"
   exit 1
 }
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --version) VERSION="$2"; shift 2 ;;
+    --deploy-at) SCHEDULE_DEPLOY="$2"; shift 2 ;;
+    --cleanup-at) SCHEDULE_CLEANUP="$2"; shift 2 ;;
+    --sub-at) SCHEDULE_SUB="$2"; shift 2 ;;
+    --webhook) WEBHOOK="$2"; shift 2 ;;
     --cleanup) CLEANUP=true; shift ;;
     *) usage ;;
   esac
@@ -134,6 +147,10 @@ sudo podman run -d --name pipeline \
   -e AWS_PROFILE=poweruser \
   -e OPENSHIFT_INSTALL_EXPERIMENTAL_DISABLE_IMAGE_POLICY=true \
   -e OCP_VERSION="${VERSION}" \
+  -e SCHEDULE_DEPLOY="${SCHEDULE_DEPLOY}" \
+  -e SCHEDULE_CLEANUP="${SCHEDULE_CLEANUP}" \
+  -e SCHEDULE_SUB="${SCHEDULE_SUB}" \
+  -e WEBHOOK_URL="${WEBHOOK}" \
   $IMAGE
 echo "Pipeline container started"
 REMOTE
