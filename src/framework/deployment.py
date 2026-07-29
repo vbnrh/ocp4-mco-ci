@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import multiprocessing as mp
+import yaml
 
 from src.deployment.ocp import OCPDeployment
 from src.deployment.ocs import OCSDeployment
@@ -54,6 +55,206 @@ def set_log_level(log_cli_level):
 class Deployment(object):
     def __init__(self):
         pass
+
+    def _cmd_output(self, cmd):
+        """Run a command silently; return decoded stdout or empty string."""
+        result = exec_cmd(cmd, ignore_error=True, silent=True)
+        if result.returncode != 0:
+            return ""
+        return result.stdout.decode().strip().strip("'")
+
+    def detect_completed_phases(self):
+        """
+        Per-cluster, per-component detection of what's already deployed.
+        Uses only simple oc commands (no pipes/shell operators — exec_cmd
+        uses shlex.split without shell=True).
+        """
+        per_cluster = {"ocp": {}, "ocs": {}, "cnv": {}, "oadp": {}}
+        hub_only = {
+            "acm": False, "gitops": False, "mco": False,
+            "submariner": False, "import": False, "ssl": False,
+            "mirror_peer": False, "dr_policy": False, "ramen_config": False,
+        }
+
+        try:
+            for i in range(framework.config.nclusters):
+                framework.config.switch_ctx(i)
+                name = framework.config.ENV_DATA["cluster_name"]
+                kubeconfig = get_kube_config_path(
+                    framework.config.ENV_DATA["cluster_path"]
+                )
+
+                per_cluster["ocp"][i] = (
+                    os.path.exists(kubeconfig)
+                    and self._cmd_output(f"oc --kubeconfig {kubeconfig} cluster-info") != ""
+                )
+                if not per_cluster["ocp"][i]:
+                    per_cluster["ocs"][i] = False
+                    per_cluster["cnv"][i] = False
+                    per_cluster["oadp"][i] = False
+                    continue
+
+                per_cluster["ocs"][i] = (
+                    self._cmd_output(
+                        "oc get storagecluster -n openshift-storage"
+                        " -o jsonpath={.items[0].status.phase}"
+                    ) == "Ready"
+                )
+
+                per_cluster["cnv"][i] = (
+                    "True" in self._cmd_output(
+                        "oc get hyperconverged -n openshift-cnv"
+                        ' -o jsonpath={.items[0].status.conditions[?(@.type=="Available")].status}'
+                    )
+                )
+
+                per_cluster["oadp"][i] = (
+                    "Succeeded" in self._cmd_output(
+                        "oc get csv -n openshift-adp"
+                        " -o jsonpath={.items[0].status.phase}"
+                    )
+                )
+
+                is_hub = (
+                    framework.config.multicluster
+                    and framework.config.get_acm_index() == i
+                )
+                if is_hub:
+                    hub_only["acm"] = (
+                        self._cmd_output(
+                            "oc get multiclusterhub -A"
+                            " -o jsonpath={.items[0].status.phase}"
+                        ) == "Running"
+                    )
+                    hub_only["gitops"] = (
+                        "Succeeded" in self._cmd_output(
+                            "oc get csv -n openshift-gitops"
+                            " -o jsonpath={.items[0].status.phase}"
+                        )
+                    )
+                    hub_only["mco"] = (
+                        "Succeeded" in self._cmd_output(
+                            "oc get csv -n openshift-operators"
+                            " -o jsonpath={.items[?(@.spec.displayName==\"DF Multicluster Orchestrator\")].status.phase}"
+                        )
+                    )
+
+            if framework.config.multicluster:
+                # Submariner — check gateway pod on each cluster
+                gw_count = 0
+                for cluster in framework.config.clusters:
+                    idx = cluster.MULTICLUSTER["multicluster_index"]
+                    framework.config.switch_ctx(idx)
+                    gw = self._cmd_output(
+                        "oc get pods -n submariner-operator"
+                        " -l app=submariner-gateway"
+                        " -o jsonpath={.items[0].status.phase}"
+                    )
+                    if gw == "Running":
+                        gw_count += 1
+                hub_only["submariner"] = gw_count == framework.config.nclusters
+
+                framework.config.switch_acm_ctx()
+
+                # Import — count non-local ManagedClusters
+                mc_names = self._cmd_output(
+                    "oc get managedclusters"
+                    " -o jsonpath={.items[*].metadata.name}"
+                )
+                if mc_names:
+                    non_local = [n for n in mc_names.split() if n != "local-cluster"]
+                    hub_only["import"] = len(non_local) > 0
+
+                # SSL — check on all clusters
+                ssl_ok = True
+                for i in range(framework.config.nclusters):
+                    framework.config.switch_ctx(i)
+                    if not self._cmd_output(
+                        "oc get cm user-ca-bundle -n openshift-config"
+                        " -o jsonpath={.metadata.name}"
+                    ):
+                        ssl_ok = False
+                        break
+                hub_only["ssl"] = ssl_ok
+
+                framework.config.switch_acm_ctx()
+
+                phase = self._cmd_output(
+                    "oc get mirrorpeer"
+                    " -o jsonpath={.items[0].status.phase}"
+                )
+                hub_only["mirror_peer"] = phase in ("Ready", "ExchangedSecret")
+
+                hub_only["dr_policy"] = (
+                    "Succeeded" in self._cmd_output(
+                        "oc get drpolicy"
+                        " -o jsonpath={.items[0].status.conditions[0].reason}"
+                    )
+                )
+
+                hub_only["ramen_config"] = (
+                    self._cmd_output(
+                        f"oc get cm {constants.DR_RAMEN_HUB_OPERATOR_CONFIG}"
+                        f" -n {constants.OPENSHIFT_OPERATORS}"
+                        " -o jsonpath={.metadata.name}"
+                    ) != ""
+                )
+
+        except Exception as ex:
+            log.warning(f"Error during phase detection (non-fatal): {ex}")
+        finally:
+            framework.config.switch_default_cluster_ctx()
+
+        # Log summary table
+        log.info("=" * 60)
+        log.info("DEPLOYMENT STATE DETECTION")
+        log.info("=" * 60)
+        for comp, cluster_map in per_cluster.items():
+            for idx, done in cluster_map.items():
+                framework.config.switch_ctx(idx)
+                name = framework.config.ENV_DATA["cluster_name"]
+                status = "DONE" if done else "INCOMPLETE"
+                log.info(f"  {comp:20s} | {name:25s} | {status}")
+        for comp, done in hub_only.items():
+            status = "DONE" if done else "INCOMPLETE"
+            log.info(f"  {comp:20s} | {'hub':25s} | {status}")
+        log.info("=" * 60)
+        framework.config.switch_default_cluster_ctx()
+
+        # Aggregate into phase-level skip decisions
+        completed = set()
+
+        def _all_clusters_done(comp):
+            return all(per_cluster[comp].get(i, False)
+                       for i in range(framework.config.nclusters))
+
+        if _all_clusters_done("ocp"):
+            completed.add("deploy_ocp")
+        if _all_clusters_done("ocs"):
+            completed.add("deploy_ocs")
+        if _all_clusters_done("cnv"):
+            completed.add("deploy_cnv")
+        if hub_only["acm"]:
+            completed.add("deploy_acm")
+        if hub_only["gitops"]:
+            completed.add("deploy_gitops")
+        if hub_only["mco"]:
+            completed.add("deploy_mco")
+        if hub_only["submariner"]:
+            completed.add("configure_submariner")
+        if hub_only["import"]:
+            completed.add("aws_import_cluster")
+        if hub_only["ssl"]:
+            completed.add("ssl_certificate")
+        if (
+            _all_clusters_done("oadp")
+            and hub_only["mirror_peer"]
+            and hub_only["dr_policy"]
+            and hub_only["ramen_config"]
+        ):
+            completed.add("configure_discovered_dr")
+
+        return completed
 
     def deploy_ocp(self, log_cli_level="INFO"):
         # OCP Deployment
@@ -173,6 +374,81 @@ class Deployment(object):
             except Exception as ex:
                 log.error("Unable to deploy MCO operator", exc_info=True)
         framework.config.switch_default_cluster_ctx()
+        self._patch_ramen_hub_namespace()
+
+    def _patch_ramen_hub_namespace(self):
+        """
+        Workaround for 4.22 ramen bug: drClusterOperator defaults are wrong:
+        - namespaceName is empty → defaults to openshift-operators → dual OG
+        - catalogSourceName is 'ramen-catalog' → doesn't exist on managed clusters
+        - channelName is 'alpha' → wrong for released builds
+        Patch the configmap with correct values.
+        """
+        framework.config.switch_acm_ctx()
+        try:
+            ramen_cm = OCP(
+                kind="ConfigMap",
+                resource_name=constants.DR_RAMEN_HUB_OPERATOR_CONFIG,
+                namespace=constants.OPENSHIFT_OPERATORS,
+            )
+            ramen_cm.get()
+            ramen_config = yaml.safe_load(
+                ramen_cm.data["data"][constants.DR_RAMEN_CONFIG_MANAGER_KEY]
+            )
+            dr_op = ramen_config.setdefault("drClusterOperator", {})
+            needs_patch = False
+            if dr_op.get("namespaceName") != "openshift-dr-system":
+                dr_op["namespaceName"] = "openshift-dr-system"
+                needs_patch = True
+            if dr_op.get("catalogSourceName") != "redhat-operators":
+                dr_op["catalogSourceName"] = "redhat-operators"
+                needs_patch = True
+            if dr_op.get("channelName") != "stable-4.22":
+                dr_op["channelName"] = "stable-4.22"
+                needs_patch = True
+            if dr_op.get("packageName") != "odr-cluster-operator":
+                dr_op["packageName"] = "odr-cluster-operator"
+                needs_patch = True
+            if dr_op.get("catalogSourceNamespaceName") != "openshift-marketplace":
+                dr_op["catalogSourceNamespaceName"] = "openshift-marketplace"
+                needs_patch = True
+            channel = dr_op.get("channelName", "stable-4.22")
+            pkg_json = self._cmd_output(
+                "oc get packagemanifest -n openshift-marketplace odr-cluster-operator -o json"
+            )
+            csv_name = ""
+            if pkg_json:
+                import json as _json
+                try:
+                    channels = _json.loads(pkg_json).get("status", {}).get("channels", [])
+                    csv_name = next(
+                        (ch["currentCSV"] for ch in channels if ch["name"] == channel), ""
+                    )
+                except (ValueError, KeyError):
+                    pass
+            if csv_name and dr_op.get("clusterServiceVersionName") != csv_name:
+                dr_op["clusterServiceVersionName"] = csv_name
+                needs_patch = True
+            if not needs_patch:
+                log.info("Ramen hub config already patched correctly")
+                return
+            log.info("Patching ramen-hub-operator-config with correct drClusterOperator values")
+            ramen_cm.data["data"][constants.DR_RAMEN_CONFIG_MANAGER_KEY] = yaml.dump(
+                ramen_config, default_flow_style=False
+            )
+            cm_data = dict(ramen_cm.data)
+            for key in ["annotations", "creationTimestamp", "resourceVersion", "uid"]:
+                cm_data.get("metadata", {}).pop(key, None)
+            import tempfile
+            cm_yaml = tempfile.NamedTemporaryFile(mode="w+", prefix="ramen_cm_patch_", delete=False)
+            yaml.dump(cm_data, cm_yaml, default_flow_style=False)
+            cm_yaml.flush()
+            exec_cmd(f"oc apply -f {cm_yaml.name}")
+            log.info("Ramen hub configmap patched successfully")
+        except Exception as ex:
+            log.warning(f"Failed to patch ramen hub configmap: {ex}")
+        finally:
+            framework.config.switch_default_cluster_ctx()
 
     def deploy_acm(self):
         # ACM Deployment
@@ -253,14 +529,17 @@ class Deployment(object):
                 ):
                     if not framework.config.MULTICLUSTER["skip_gitops_deployment"]:
                         log.info("Deploying GitOps Operator")
+                        # Deploy operator subscription only on hub
+                        framework.config.switch_ctx(framework.config.get_acm_index())
+                        gitops_deployment = GitopsDeployment()
+                        gitops_deployment.deploy_prereq()
+                        GitopsDeployment.deploy_gitops()
+                        # Role binding on managed clusters only
                         for cluster in framework.config.clusters:
                             index = cluster.MULTICLUSTER["multicluster_index"]
-                            framework.config.switch_ctx(index)
-                            gitops_deployment = GitopsDeployment()
-                            gitops_deployment.deploy_prereq()
-                            if framework.config.get_acm_index() == index:
-                                GitopsDeployment.deploy_gitops()
-                            else:
+                            if framework.config.get_acm_index() != index:
+                                framework.config.switch_ctx(index)
+                                gitops_deployment = GitopsDeployment()
                                 gitops_deployment.gitops_role_binding()
                         self._gitops_deployed = True
                     else:
@@ -634,11 +913,11 @@ class Deployment(object):
                     .get("status", {})
                     .get("phase", "Unknown")
                 )
-                if phase == "ExchangedSecret":
+                if phase in ("ExchangedSecret", "Ready"):
                     results.append({
                         "component": "MirrorPeer",
                         "status": "PASS",
-                        "detail": "ExchangedSecret",
+                        "detail": phase,
                     })
                 else:
                     results.append({

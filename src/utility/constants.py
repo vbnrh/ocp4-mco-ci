@@ -49,6 +49,7 @@ OADP_SUBSCRIPTION_YAML = os.path.join(
     TEMPLATE_DIR, "oadp-deployment", "subscription.yaml"
 )
 OADP_NS_YAML = os.path.join(TEMPLATE_DIR, "oadp-deployment", "namespace_opg_oadp.yaml")
+OADP_IDMS_YAML = os.path.join(TEMPLATE_DIR, "oadp-deployment", "idms_oadp_unreleased.yaml")
 
 # GitOps
 GITOPS_NAMESPACE = "openshift-gitops"

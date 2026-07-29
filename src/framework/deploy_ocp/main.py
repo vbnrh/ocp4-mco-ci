@@ -242,26 +242,63 @@ def main(argv=None):
 
     # Proceed with deployment steps
     deployment = Deployment()
+
+    # Detect already-completed phases to enable resume-from-failure
+    completed = deployment.detect_completed_phases()
+    if completed:
+        logger.info(f"Phases already completed (will skip): {sorted(completed)}")
+
     # Deploy OCP
-    deployment.deploy_ocp(log_cli_level)
+    if "deploy_ocp" not in completed:
+        deployment.deploy_ocp(log_cli_level)
+    else:
+        logger.info("Skipping OCP deployment — clusters already running")
     # Deploy OCS
-    deployment.deploy_ocs(log_cli_level)
+    if "deploy_ocs" not in completed:
+        deployment.deploy_ocs(log_cli_level)
+    else:
+        logger.info("Skipping OCS deployment — StorageCluster already Ready")
     # Deploy CNV (OpenShift Virtualization)
-    deployment.deploy_cnv()
+    if "deploy_cnv" not in completed:
+        deployment.deploy_cnv()
+    else:
+        logger.info("Skipping CNV deployment — HyperConverged already Available")
     # Deploy ACM
-    deployment.deploy_acm()
+    if "deploy_acm" not in completed:
+        deployment.deploy_acm()
+    else:
+        logger.info("Skipping ACM deployment — MultiClusterHub already Running")
     # Deploy GitOps (MUST be before MCO and DR - DR requires ArgoCD ApplicationSets)
-    deployment.deploy_gitops()
+    if "deploy_gitops" not in completed:
+        deployment.deploy_gitops()
+    else:
+        logger.info("Skipping GitOps deployment — already Succeeded")
+        deployment._gitops_deployed = True
     # Deploy MCO
-    deployment.deploy_mco()
+    if "deploy_mco" not in completed:
+        deployment.deploy_mco()
+    else:
+        logger.info("Skipping MCO deployment — already Succeeded")
     # Configure submariner
-    deployment.configure_submariner()
+    if "configure_submariner" not in completed:
+        deployment.configure_submariner()
+    else:
+        logger.info("Skipping Submariner — gateway pods already running")
     # import managed cluster
-    deployment.aws_import_cluster()
+    if "aws_import_cluster" not in completed:
+        deployment.aws_import_cluster()
+    else:
+        logger.info("Skipping cluster import — ManagedClusters already present")
     # SSL certificate exchange
-    deployment.ssl_certificate()
+    if "ssl_certificate" not in completed:
+        deployment.ssl_certificate()
+    else:
+        logger.info("Skipping SSL certificate exchange — user-ca-bundle exists")
     # Configure discovered DR (requires GitOps to be ready)
-    deployment.configure_discovered_dr()
+    if "configure_discovered_dr" not in completed:
+        deployment.configure_discovered_dr()
+    else:
+        logger.info("Skipping discovered DR — OADP, MirrorPeer, DRPolicy all done")
     # Deploy RDR test workloads (requires DR, GitOps, and ACM ready)
     deployment.deploy_workloads()
     # Post-deployment validation (retries 3x before reporting)

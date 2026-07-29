@@ -60,7 +60,10 @@ def download_installer(
     # Check if we have this version cached
     if os.path.isfile(cached_installer_path):
         logger.info(f"Using cached installer for version {version}.")
-        # Copy cached version to the main installer path
+        # Remove existing binary first to avoid macOS inode flagging
+        # (a SIGKILL'd binary's inode stays flagged if overwritten in-place)
+        if os.path.isfile(installer_binary_path):
+            os.remove(installer_binary_path)
         shutil.copy2(cached_installer_path, installer_binary_path)
     elif os.path.isfile(installer_binary_path):
         # Check if existing installer matches requested version
@@ -366,11 +369,22 @@ def expose_ocp_version(version):
     (e.g. 4.2.0-0.nightly-2019-08-08-103722)
     If the version ends with -ga than it will find the latest GA OCP version
     and will expose 4.2-ga to for example 4.2.22.
+
+    Set OCP_INSTALLER_VERSION to override nightly resolution with a specific
+    cached version (e.g. 4.22.0-0.nightly-2026-05-26-073129).
+
     Args:
         version (str): Verison of OCP
     Returns:
         str: Version of OCP exposed to full version if latest nighly passed
     """
+    override = os.environ.get("OCP_INSTALLER_VERSION")
+    if override:
+        logger.info(
+            f"OCP_INSTALLER_VERSION override set: using '{override}' "
+            f"instead of resolving '{version}'"
+        )
+        return override
     if version.endswith(".nightly"):
         latest_nightly_url = (
             f"https://amd64.ocp.releases.ci.openshift.org/api/v1/"

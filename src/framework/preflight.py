@@ -194,7 +194,13 @@ def _verify_image_pull_access(pull_secret_path, errors, warnings):
     # OCP nightly: resolve partial tag (e.g. 4.22.0-0.nightly) to full build ID
     # This also validates registry.ci.openshift.org auth
     installer_version = config.DEPLOYMENT.get("installer_version", "")
-    if "nightly" in installer_version:
+    override_version = os.environ.get("OCP_INSTALLER_VERSION")
+    if override_version:
+        logger.info(
+            f"[PREFLIGHT] OCP_INSTALLER_VERSION override: {override_version} "
+            f"(skipping registry image check — using cached installer)"
+        )
+    elif installer_version.endswith(".nightly"):
         resolved = _resolve_nightly_version(installer_version, errors)
         if resolved:
             images_to_check.append(
