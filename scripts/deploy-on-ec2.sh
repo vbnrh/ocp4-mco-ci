@@ -129,7 +129,15 @@ $AWS ec2 describe-key-pairs --key-names "$KEY_NAME" >/dev/null 2>&1 || \
 
 # --- Launch EC2 ---
 echo "Launching EC2 instance..."
-AMI=$($AWS ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023.*-x86_64" "Name=state,Values=available" --query 'sort_by(Images, &CreationDate)[-1].ImageId' --output text)
+# Fedora 41+ has Podman pre-installed
+AMI=$($AWS ec2 describe-images --owners 125523088429 --filters "Name=name,Values=Fedora-Cloud-Base-AmazonEC2.*x86_64*" "Name=state,Values=available" --query 'sort_by(Images, &CreationDate)[-1].ImageId' --output text)
+if [ "$AMI" = "None" ] || [ -z "$AMI" ]; then
+  echo "Fedora AMI not found, falling back to Amazon Linux 2023..."
+  AMI=$($AWS ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023.*-x86_64" "Name=state,Values=available" --query 'sort_by(Images, &CreationDate)[-1].ImageId' --output text)
+  EC2_USER="${EC2_USER}"
+else
+  EC2_USER="fedora"
+fi
 INSTANCE_ID=$($AWS ec2 run-instances \
   --image-id "$AMI" --instance-type "$INSTANCE_TYPE" \
   --key-name "$KEY_NAME" --security-group-ids "$SG_ID" \
@@ -146,29 +154,29 @@ echo "Public IP: $EC2_IP"
 # --- Wait for SSH ---
 echo "Waiting for SSH..."
 for i in $(seq 1 30); do
-  ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$SSH_KEY" ec2-user@"$EC2_IP" "echo ready" 2>/dev/null && break
+  ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$SSH_KEY" ${EC2_USER}@"$EC2_IP" "echo ready" 2>/dev/null && break
   sleep 10
 done
 
 # --- SCP secrets ---
 echo "Copying secrets..."
-ssh -i "$SSH_KEY" ec2-user@"$EC2_IP" "mkdir -p ~/secrets ~/.aws ~/.ssh"
-scp -i "$SSH_KEY" data/pull-secret "ec2-user@$EC2_IP:~/secrets/pull-secret"
-scp -i "$SSH_KEY" data/auth.yaml "ec2-user@$EC2_IP:~/secrets/auth.yaml"
-scp -i "$SSH_KEY" "$HOME/.aws/credentials" "ec2-user@$EC2_IP:~/.aws/credentials"
-scp -i "$SSH_KEY" "$SSH_KEY" "ec2-user@$EC2_IP:~/.ssh/id_ed25519"
-scp -i "$SSH_KEY" "$SSH_KEY.pub" "ec2-user@$EC2_IP:~/.ssh/id_ed25519.pub"
-ssh -i "$SSH_KEY" ec2-user@"$EC2_IP" "chmod 600 ~/.ssh/id_ed25519"
+ssh -i "$SSH_KEY" ${EC2_USER}@"$EC2_IP" "mkdir -p ~/secrets ~/.aws ~/.ssh"
+scp -i "$SSH_KEY" data/pull-secret "${EC2_USER}@$EC2_IP:~/secrets/pull-secret"
+scp -i "$SSH_KEY" data/auth.yaml "${EC2_USER}@$EC2_IP:~/secrets/auth.yaml"
+scp -i "$SSH_KEY" "$HOME/.aws/credentials" "${EC2_USER}@$EC2_IP:~/.aws/credentials"
+scp -i "$SSH_KEY" "$SSH_KEY" "${EC2_USER}@$EC2_IP:~/.ssh/id_ed25519"
+scp -i "$SSH_KEY" "$SSH_KEY.pub" "${EC2_USER}@$EC2_IP:~/.ssh/id_ed25519.pub"
+ssh -i "$SSH_KEY" ${EC2_USER}@"$EC2_IP" "chmod 600 ~/.ssh/id_ed25519"
 
 # --- Pull and run container ---
 echo "Starting pipeline container..."
-ssh -i "$SSH_KEY" ec2-user@"$EC2_IP" bash <<REMOTE
+ssh -i "$SSH_KEY" ${EC2_USER}@"$EC2_IP" bash <<REMOTE
 sudo podman pull $IMAGE
 sudo podman run -d --name pipeline \
-  -v /home/ec2-user/secrets/pull-secret:/app/data/pull-secret:ro \
-  -v /home/ec2-user/secrets/auth.yaml:/app/data/auth.yaml:ro \
-  -v /home/ec2-user/.aws:/root/.aws:ro \
-  -v /home/ec2-user/.ssh:/root/.ssh:ro \
+  -v /home/${EC2_USER}/secrets/pull-secret:/app/data/pull-secret:ro \
+  -v /home/${EC2_USER}/secrets/auth.yaml:/app/data/auth.yaml:ro \
+  -v /home/${EC2_USER}/.aws:/root/.aws:ro \
+  -v /home/${EC2_USER}/.ssh:/root/.ssh:ro \
   -v /tmp:/tmp \
   -e AWS_PROFILE=poweruser \
   -e OPENSHIFT_INSTALL_EXPERIMENTAL_DISABLE_IMAGE_POLICY=true \
@@ -192,15 +200,15 @@ subnet_id: $SUBNET_ID
 security_group_id: $SG_ID
 image: $IMAGE
 ocp_version: ${VERSION:-bundled}
-ssh_command: ssh -i $SSH_KEY ec2-user@$EC2_IP
-monitor: ssh -i $SSH_KEY ec2-user@$EC2_IP sudo podman logs -f pipeline
+ssh_command: ssh -i $SSH_KEY ${EC2_USER}@$EC2_IP
+monitor: ssh -i $SSH_KEY ${EC2_USER}@$EC2_IP sudo podman logs -f pipeline
 EOF
 
 echo ""
 echo "========================================="
 echo "Pipeline running on EC2"
 echo "========================================="
-echo "SSH:     ssh -i $SSH_KEY ec2-user@$EC2_IP"
-echo "Monitor: ssh -i $SSH_KEY ec2-user@$EC2_IP sudo podman logs -f pipeline"
+echo "SSH:     ssh -i $SSH_KEY ${EC2_USER}@$EC2_IP"
+echo "Monitor: ssh -i $SSH_KEY ${EC2_USER}@$EC2_IP sudo podman logs -f pipeline"
 echo "Cleanup: $0 --cleanup"
 echo "========================================="
