@@ -225,9 +225,18 @@ class OperatorDeployment(object):
             exec_cmd(f"oc apply -f {ns_yaml}")
         logger.info("Creating Operator Subscription")
         subscription_yaml_data = templating.load_yaml(subscription_yaml)
+        catalog_source = subscription_yaml_data["spec"].get("source")
+        pm_selector = operator_selector
+        if catalog_source:
+            catalog_filter = f"catalog={catalog_source}"
+            pm_selector = (
+                f"{operator_selector},{catalog_filter}"
+                if operator_selector
+                else catalog_filter
+            )
         package_manifest = PackageManifest(
             resource_name=self.name,
-            selector=operator_selector,
+            selector=pm_selector,
         )
         # Wait for package manifest is ready
         package_manifest.wait_for_resource(timeout=300)

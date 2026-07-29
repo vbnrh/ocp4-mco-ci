@@ -1,4 +1,6 @@
 import logging
+import shlex
+import subprocess
 
 import requests
 import tempfile
@@ -109,12 +111,27 @@ def create_aws_policy():
 
 def run_subctl_cmd(cmd=None):
     """
-    Run subctl command
-    Args:
-        cmd: subctl command to be executed
+    Run subctl command using DEVNULL for stdin — subctl v0.23+
+    exits immediately when stdin is a pipe (TTY detection).
     """
     cmd = " ".join(["subctl", cmd])
-    exec_cmd(cmd)
+    logger.info(f"Executing command: {cmd}")
+    result = subprocess.run(
+        shlex.split(cmd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        timeout=600,
+    )
+    if result.stdout:
+        logger.info(f"subctl stdout: {result.stdout.decode()}")
+    if result.stderr:
+        logger.warning(f"subctl stderr: {result.stderr.decode()}")
+    if result.returncode:
+        raise CommandFailed(
+            f"Error during execution of command: {cmd}.\n"
+            f"Error is {result.stderr.decode()}"
+        )
 
 
 class Submariner(object):
@@ -184,6 +201,31 @@ class Submariner(object):
                     dest_path,
                 )
 
+    def _ensure_gateway_node(self, cluster):
+        kubeconfig = get_kube_config_path(cluster.ENV_DATA['cluster_path'])
+        check = exec_cmd(
+            f"oc --kubeconfig {kubeconfig} get nodes -l submariner.io/gateway=true"
+            " --no-headers -o name",
+            ignore_error=True, silent=True,
+        )
+        if check.returncode == 0 and check.stdout.decode().strip():
+            logger.info(f"Gateway node already labeled: {check.stdout.decode().strip()}")
+            return
+        result = exec_cmd(
+            f"oc --kubeconfig {kubeconfig} get nodes"
+            " -l node-role.kubernetes.io/worker"
+            " --no-headers -o custom-columns=NAME:.metadata.name",
+        )
+        workers = result.stdout.decode().strip().splitlines()
+        if not workers:
+            raise Exception("No worker nodes found for gateway labeling")
+        gw_node = workers[0]
+        logger.info(f"Labeling gateway node: {gw_node}")
+        exec_cmd(
+            f"oc --kubeconfig {kubeconfig} label node {gw_node}"
+            " submariner.io/gateway=true --overwrite"
+        )
+
     @retry(CommandFailed, tries=5, delay=60, backoff=1)
     def join_cluster(self, cluster):
         # Join all the clusters (except ACM cluster in case of hub deployment)
@@ -195,7 +237,8 @@ class Submariner(object):
             join_cmd = (
                 f"join --kubeconfig {get_kube_config_path(cluster.ENV_DATA['cluster_path'])} "
                 f"{config.MULTICLUSTER['submariner_info_file']} "
-                f"--clusterid c{self.cluster_seq}"
+                f"--clusterid c{self.cluster_seq} "
+                f"--label-gateway=false"
             )
             run_subctl_cmd(
                 join_cmd,

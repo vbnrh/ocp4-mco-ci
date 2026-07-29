@@ -82,26 +82,32 @@ class DiscoveredDR(OADPDeployment):
         Validate mirror peer,
         Begins with CTX: ACM
 
-        1. Check initial phase of 'ExchangingSecret'
-        2. Check token-exchange-agent pod in 'Running' phase
+        Waits for phase 'ExchangedSecret' (< 4.22) or 'Ready' (4.22+).
 
         Raises:
             ResourceWrongStatusException: If pod is not in expected state
 
         """
-        # Check mirror peer status only on HUB
         mirror_peer = ocp.OCP(
             kind="MirrorPeer",
             resource_name=resource_name,
         )
         mirror_peer._has_phase = True
         mirror_peer.get()
-        try:
-            mirror_peer.wait_for_phase(phase="ExchangedSecret", timeout=600)
-            logger.info("Mirror peer is in expected phase 'ExchangedSecret'")
-        except ResourceWrongStatusException:
-            logger.exception("Mirror peer couldn't attain expected phase")
-            raise
+
+        def _check_mirror_peer_ready():
+            mirror_peer.reload_data()
+            phase = mirror_peer.data.get("status", {}).get("phase", "")
+            return phase in ("ExchangedSecret", "Ready")
+
+        sampler = TimeoutSampler(600, 5, func=_check_mirror_peer_ready)
+        if not sampler.wait_for_func_status(True):
+            raise ResourceWrongStatusException(
+                f"MirrorPeer {resource_name} did not reach expected phase "
+                f"(ExchangedSecret or Ready) within 600s"
+            )
+        phase = mirror_peer.data.get("status", {}).get("phase", "")
+        logger.info(f"Mirror peer is in expected phase '{phase}'")
 
     def _deploy_dr_policy(self):
         """
