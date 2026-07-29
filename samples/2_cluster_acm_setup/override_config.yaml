@@ -2,8 +2,8 @@ RUN:
   bin_dir: './bin'
   client_version: '4.22.0-0.nightly'
 DEPLOYMENT:
-  force_download_installer: true
-  installer_version : "4.22.0-0.nightly"
+  force_download_installer: false
+  installer_version : "4.22.0-0.nightly-2026-07-16-135205"
   ssh_key: "~/.ssh/id_ed25519.pub"
   # ocp_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp"
 ENV_DATA:
@@ -15,7 +15,7 @@ ENV_DATA:
   skip_ocs_deployment: false
   skip_ocs_cluster_creation: false
   enable_ocs_plugin: true
-  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry:latest-stable-4.22.0"
+  ocs_registry_image: "quay.io/rhceph-dev/ocs-registry@sha256:b19af273f56b9bcc970596aa819faf71be0467c1d6bd84e76ad47be2776ed848"
   ocs_csv_channel: "stable-4.22"
   ocs_version: '4.22'
   cnv_version: '4.22'
