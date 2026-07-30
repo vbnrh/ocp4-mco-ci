@@ -29,16 +29,25 @@ export PATH="/app/bin:$PATH"
 
 cd /app
 
-# Configure env.dr.yaml from environment variables
+# Generate env.dr.yaml from environment variables
 ENV_FILE="/app/config/env.dr.yaml"
-if [ -f "$ENV_FILE" ]; then
-  DEPLOY_TIME="${SCHEDULE_DEPLOY:-$(date -u -d '+2 minutes' '+%H:%M' 2>/dev/null || date -u -v+2M '+%H:%M')}"
-  sed -i "s|schedule_time_deploy: .*|schedule_time_deploy: '$DEPLOY_TIME'|" "$ENV_FILE"
-  [ -n "$SCHEDULE_CLEANUP" ] && sed -i "s|schedule_time_cleanup: .*|schedule_time_cleanup: '$SCHEDULE_CLEANUP'|" "$ENV_FILE"
-  [ -n "$SCHEDULE_SUB" ] && sed -i "s|schedule_time_deploy_sub: .*|schedule_time_deploy_sub: '$SCHEDULE_SUB'|" "$ENV_FILE"
-  [ -n "$WEBHOOK_URL" ] && sed -i "s|webhook_url: .*|webhook_url: '$WEBHOOK_URL'|" "$ENV_FILE"
-  sed -i "s|use_installer_cache: .*|use_installer_cache: false|" "$ENV_FILE"
-  echo "env.dr.yaml configured: deploy=$DEPLOY_TIME"
-fi
+DEPLOY_TIME="${SCHEDULE_DEPLOY:-$(date -u -d '+2 minutes' '+%H:%M' 2>/dev/null || date -u '+%H:%M')}"
+CLEANUP_TIME="${SCHEDULE_CLEANUP:-20:00}"
+SUB_TIME="${SCHEDULE_SUB:-09:30}"
+HOOK="${WEBHOOK_URL:-}"
+
+cat > "$ENV_FILE" <<YAML
+ocp_config: './samples/2_cluster_acm_setup/override_config.yaml'
+ocp_hub_config: './samples/2_cluster_acm_setup/override_hub_config.yaml'
+ocp_sub_config: './samples/configure_submariner/override_config.yaml'
+ocp_hub_sub_config: './samples/configure_submariner/override_hub_config.yaml'
+use_installer_cache: false
+cache_version: '4.22.0-0.nightly-2026-07-16-135205'
+schedule_time_cleanup: '$CLEANUP_TIME'
+schedule_time_deploy: '$DEPLOY_TIME'
+schedule_time_deploy_sub: '$SUB_TIME'
+webhook_url: '$HOOK'
+YAML
+echo "env.dr.yaml generated: deploy=$DEPLOY_TIME cleanup=$CLEANUP_TIME sub=$SUB_TIME"
 
 exec python3 scripts/deploy-dr-ocp.py "$@"

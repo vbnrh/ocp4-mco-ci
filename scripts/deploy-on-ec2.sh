@@ -2,7 +2,7 @@
 set -e
 
 REGION="us-east-1"
-INSTANCE_TYPE="t3.medium"
+INSTANCE_TYPE="t3.large"
 DISK_SIZE=8
 KEY_NAME="vm-ocp-ci-deploy"
 SSH_KEY="$HOME/.ssh/id_ed25519"
